@@ -1,0 +1,44 @@
+{# 解決報告フォーム(profile.html から include される) #}
+{# 必要コンテキスト: target_alert, residents #}
+<form method="post" action="{% url 'report_create' %}" class="report-form">
+  {% csrf_token %}
+  <input type="hidden" name="alert" value="{{ target_alert.id }}">
+
+  <div class="field">
+    <label for="id_resident">誰だったか(利用者)</label>
+    <select name="resident" id="id_resident">
+      <option value="">-- 選択してください --</option>
+      {% for resident in residents %}
+      <option value="{{ resident.id }}">{{ resident.name }}({{ resident.room_number }}号室)</option>
+      {% endfor %}
+    </select>
+    <p class="field__help">未登録の利用者の場合はコメント欄にご記入ください。</p>
+  </div>
+
+  <div class="field">
+    <span class="field__label">身体的な問題</span>
+    <div class="radio-group">
+      <label><input type="radio" name="physical_issue" value="none" checked> なし</label>
+      <label><input type="radio" name="physical_issue" value="suspected"> あり(疑い)</label>
+      <label><input type="radio" name="physical_issue" value="confirmed"> あり(確認)</label>
+      <label><input type="radio" name="physical_issue" value="unknown"> 不明</label>
+    </div>
+  </div>
+
+  <div class="field">
+    <label for="id_injury_detail">怪我・体調の詳細</label>
+    <input type="text" name="injury_detail" id="id_injury_detail" placeholder="例: 左膝に打撲跡。痛み訴えなし。意識清明">
+  </div>
+
+  <div class="field">
+    <label for="id_action_taken">対応内容</label>
+    <textarea name="action_taken" id="id_action_taken" rows="3" placeholder="例: 起こし介助、バイタル測定、看護師へ連絡、家族へ報告"></textarea>
+  </div>
+
+  <div class="field">
+    <label for="id_comment">その他コメント</label>
+    <textarea name="comment" id="id_comment" rows="3" placeholder="例: ベッド周辺に滑りやすいマットがあったため撤去済み"></textarea>
+  </div>
+
+  <button type="submit" class="btn btn--success">報告を保存</button>
+</form>

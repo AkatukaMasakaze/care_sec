@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+
+{% block title %}異常詳細{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>異常詳細 #{{ alert.id }}</h1>
+  <p class="page-header__sub">{{ alert.occurred_at|date:"Y/m/d H:i:s" }} / {{ alert.camera_name }} / {{ alert.location }}</p>
+</div>
+
+<div class="grid-player">
+  <section class="card">
+    <div class="card__header">
+      <h2>検知時の映像・画像</h2>
+      <span class="chip chip--{{ alert.status }}">{{ alert.status_label }}</span>
+    </div>
+    {% if alert.thumbnail_url %}
+      <img src="{{ alert.thumbnail_url }}" alt="検知時サムネイル" class="detail-thumb">
+    {% else %}
+      <div class="empty">画像はありません</div>
+    {% endif %}
+
+    {% if recording %}
+    <div class="player-actions">
+      <a class="btn btn--primary btn--sm" href="{% url 'recording_detail' recording.id %}">🎞 検知瞬間の録画を再生</a>
+    </div>
+    {% endif %}
+
+    <div class="card__header"><h2>AI検知情報</h2></div>
+    <dl class="detail-list">
+      <dt>異常の種類</dt><dd><span class="chip chip--{{ alert.kind }}">{{ alert.kind_label }}</span></dd>
+      <dt>人物状態</dt><dd>{{ alert.get_detected_state_display }}</dd>
+      <dt>AI信頼度</dt>
+      <dd>
+        {% if alert.confidence_percent is not None %}{{ alert.confidence_percent }}%{% else %}-{% endif %}
+      </dd>
+      {% if alert.is_false_positive %}<dt>誤検知</dt><dd><span class="chip chip--fp">誤検知として登録済み</span></dd>{% endif %}
+    </dl>
+
+    <div class="card__header"><h2>時刻ログ</h2></div>
+    <dl class="detail-list">
+      <dt>発生日時</dt><dd>{{ alert.occurred_at|date:"Y/m/d H:i:s" }}</dd>
+      <dt>アラート発生</dt><dd>{{ alert.created_at|date:"Y/m/d H:i:s" }}</dd>
+      <dt>対応開始</dt><dd>{{ alert.responded_at|date:"Y/m/d H:i:s"|default:"-" }}</dd>
+      <dt>対応完了</dt><dd>{{ alert.resolved_at|date:"Y/m/d H:i:s"|default:"-" }}</dd>
+    </dl>
+  </section>
+
+  <aside class="card">
+    <div class="card__header"><h2>対応状況</h2></div>
+    <dl class="detail-list">
+      <dt>対応者</dt>
+      <dd>{% if alert.responder %}{{ alert.responder.get_full_name|default:alert.responder.username }}{% else %}未割り当て{% endif %}</dd>
+      <dt>状況</dt><dd><span class="chip chip--{{ alert.status }}">{{ alert.status_label }}</span></dd>
+    </dl>
+
+    {% if alert.status == 'open' %}
+      <form method="post" action="{% url 'alert_respond' alert.id %}">
+        {% csrf_token %}
+        <button type="submit" class="btn btn--primary btn--block">対応する</button>
+      </form>
+    {% elif alert.status == 'responding' and alert.responder == user %}
+      <form method="post" action="{% url 'alert_resolve' alert.id %}">
+        {% csrf_token %}
+        <button type="submit" class="btn btn--success btn--block">解決・報告を入力</button>
+      </form>
+    {% endif %}
+
+    {% if alert.status != 'false_positive' %}
+    <form method="post" action="{% url 'alert_false_positive' alert.id %}" class="fp-form">
+      {% csrf_token %}
+      <button type="submit" class="btn btn--ghost btn--sm btn--block">⚠ 誤検知として報告</button>
+    </form>
+    <p class="field__help">誤検知として報告すると、AI閾値の自動調整に反映されます。</p>
+    {% else %}
+    <div class="alert-card__resolved-note" style="text-align:center; padding: 8px;"> 誤検知として報告済み</div>
+    {% endif %}
+
+    {% if report %}
+    <div class="card__header"><h2>解決報告</h2></div>
+    <dl class="detail-list">
+      <dt>報告者</dt><dd>{{ report.author.get_full_name|default:report.author.username }}</dd>
+      <dt>利用者</dt><dd>{{ report.resident_name|default:"-" }}</dd>
+      <dt>身体的問題</dt><dd>{{ report.physical_issue_label }}</dd>
+      <dt>怪我詳細</dt><dd>{{ report.injury_detail|default:"-" }}</dd>
+      <dt>対応内容</dt><dd>{{ report.action_taken|default:"-" }}</dd>
+      <dt>コメント</dt><dd>{{ report.comment|default:"-" }}</dd>
+    </dl>
+    {% endif %}
+
+    <a href="{% url 'alert_list' %}" class="btn btn--ghost btn--sm">← 異常一覧へ戻る</a>
+  </aside>
+</div>
+{% endblock %}

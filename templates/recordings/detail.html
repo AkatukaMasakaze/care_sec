@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+
+{% block title %}録画再生{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>録画再生</h1>
+  <p class="page-header__sub">{{ recording.started_at|date:"Y/m/d H:i:s" }} / {{ recording.camera_name }}</p>
+</div>
+
+<div class="grid-player">
+  {# ===== プレイヤー ===== #}
+  <section class="card player-card">
+    <video id="recording-video" controls preload="metadata"
+           {% if recording.thumbnail_url %}poster="{{ recording.thumbnail_url }}"{% endif %}>
+      <source src="{{ recording.video_url }}" type="video/mp4">
+      お使いのブラウザは動画再生に対応していません。
+    </video>
+
+    {% if markers %}
+    <div class="marker-bar">
+      <span class="marker-bar__label">AI検知マーク:</span>
+      {% for m in markers %}
+        <button type="button" class="btn btn--ghost btn--sm" data-seek="{{ m.seconds }}">
+          🎯 {{ m.label }}({{ m.time_label }})
+        </button>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="player-actions">
+      <a class="btn btn--ghost" href="{{ recording.video_url }}" download>⬇ 動画をダウンロード</a>
+      <a class="btn btn--ghost" href="{% url 'recording_list' %}">← 録画一覧へ戻る</a>
+    </div>
+  </section>
+
+  {# ===== 録画情報 ===== #}
+  <aside class="card">
+    <div class="card__header"><h2>録画情報</h2></div>
+    <dl class="detail-list">
+      <dt>種類</dt><dd><span class="chip chip--{{ recording.kind }}">{{ recording.kind_label }}</span></dd>
+      <dt>開始</dt><dd>{{ recording.started_at|date:"Y/m/d H:i:s" }}</dd>
+      <dt>終了</dt><dd>{{ recording.ended_at|date:"Y/m/d H:i:s" }}</dd>
+      <dt>長さ</dt><dd>{{ recording.duration_label }}</dd>
+      <dt>カメラ</dt><dd>{{ recording.camera_name }} / {{ recording.location }}</dd>
+      <dt>録画理由</dt><dd>{{ recording.reason|default:"AIが異常を検知したため自動録画" }}</dd>
+    </dl>
+
+    {% if related_alert %}
+    <div class="card__header"><h2>関連する異常検知</h2></div>
+    <dl class="detail-list">
+      <dt>検知内容</dt><dd>{{ related_alert.kind_label }}</dd>
+      <dt>状況</dt><dd><span class="chip chip--{{ related_alert.status }}">{{ related_alert.status_label }}</span></dd>
+      <dt>対応者</dt><dd>{% if related_alert.responder %}{{ related_alert.responder.get_full_name|default:related_alert.responder.username }}{% else %}未割り当て{% endif %}</dd>
+    </dl>
+    <a href="{% url 'alert_list' %}" class="btn btn--ghost btn--sm">異常検知タブへ</a>
+    {% endif %}
+
+    {% if related_report %}
+    <div class="card__header"><h2>解決報告</h2></div>
+    <dl class="detail-list">
+      <dt>報告者</dt><dd>{{ related_report.author.get_full_name|default:related_report.author.username }}</dd>
+      <dt>利用者</dt><dd>{{ related_report.resident_name|default:"-" }}</dd>
+      <dt>身体的問題</dt><dd>{{ related_report.physical_issue_label }}</dd>
+      <dt>対応内容</dt><dd>{{ related_report.action_taken }}</dd>
+      <dt>コメント</dt><dd>{{ related_report.comment|default:"-" }}</dd>
+    </dl>
+    {% endif %}
+  </aside>
+</div>
+{% endblock %}

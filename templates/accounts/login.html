@@ -1,0 +1,47 @@
+{% load static %}<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ログイン｜CARE SEC 転倒・異常検知システム</title>
+<link rel="stylesheet" href="{% static 'css/style.css' %}">
+</head>
+<body class="login-page">
+
+<div class="login-card">
+  <div class="login-card__brand">
+    <span class="topbar__logo" aria-hidden="true">◉</span>
+    <h1>CARE SEC</h1>
+    <p>転倒・異常検知システム</p>
+  </div>
+
+  {% if form.non_field_errors %}
+    <div class="form-error-banner" role="alert">
+      {% for error in form.non_field_errors %}<p>{{ error }}</p>{% endfor %}
+    </div>
+  {% endif %}
+  {% if form.errors and not form.non_field_errors %}
+    <div class="form-error-banner" role="alert"><p>ユーザー名またはパスワードが正しくありません。</p></div>
+  {% endif %}
+
+  <form method="post" action="{% url 'login' %}" novalidate>
+    {% csrf_token %}
+    <input type="hidden" name="next" value="{{ next|default:'/' }}">
+
+    <div class="field">
+      <label for="id_username">ユーザー名</label>
+      {{ form.username }}
+    </div>
+    <div class="field">
+      <label for="id_password">パスワード</label>
+      {{ form.password }}
+    </div>
+
+    <button type="submit" class="btn btn--primary btn--block">ログイン</button>
+  </form>
+
+  <p class="login-card__help">アカウントは施設管理者から発行されます。</p>
+</div>
+
+</body>
+</html>

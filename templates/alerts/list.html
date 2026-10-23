@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block title %}異常検知{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>異常検知</h1>
+  <p class="page-header__sub">AI検知した異常の一覧。「対応する」を押すと全スタッフに誰が対応中か共有されます</p>
+</div>
+
+{# ===== ステータスフィルタ ===== #}
+<div class="filter-bar">
+  <a href="{% url 'alert_list' %}" class="filter-chip{% if current_status == '' %} is-selected{% endif %}">すべて</a>
+  <a href="?status=open" class="filter-chip{% if current_status == 'open' %} is-selected{% endif %}">未対応</a>
+  <a href="?status=responding" class="filter-chip{% if current_status == 'responding' %} is-selected{% endif %}">対応中</a>
+  <a href="?status=resolved" class="filter-chip{% if current_status == 'resolved' %} is-selected{% endif %}">解決済み</a>
+  <a href="?status=false_positive" class="filter-chip{% if current_status == 'false_positive' %} is-selected{% endif %}">誤検知</a>
+</div>
+
+{# ===== 詳細フィルタ(種類 / 対応者 / 日付) ===== #}
+<form method="get" class="filter-form">
+  {% if current_status %}<input type="hidden" name="status" value="{{ current_status }}">{% endif %}
+  <label>異常の種類
+    <select name="kind">
+      <option value="">すべて</option>
+      {% for value, label in kinds %}
+      <option value="{{ value }}"{% if current_kind == value %} selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>対応した介護士
+    <select name="responder">
+      <option value="">すべて</option>
+      {% for user in responder_choices %}
+      <option value="{{ user.id }}"{% if current_responder == user.id|stringformat:"s" %} selected{% endif %}>
+        {{ user.get_full_name|default:user.username }}
+      </option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>日付(から)
+    <input type="date" name="date_from" value="{{ date_from }}">
+  </label>
+  <label>日付(まで)
+    <input type="date" name="date_to" value="{{ date_to }}">
+  </label>
+  <button type="submit" class="btn btn--primary btn--sm">絞り込む</button>
+  <a href="{% url 'alert_list' %}" class="btn btn--ghost btn--sm">クリア</a>
+</form>
+
+<div class="alert-list">
+  {% for alert in alerts %}
+  <article class="alert-card alert-card--{{ alert.status }}" id="alert-{{ alert.id }}" data-alert-id="{{ alert.id }}">
+
+    <div class="alert-card__thumb">
+      {% if alert.thumbnail_url %}
+        <img src="{{ alert.thumbnail_url }}" alt="{{ alert.kind_label }} 検知時サムネイル">
+      {% else %}
+        <div class="alert-card__thumb-placeholder">🚨</div>
+      {% endif %}
+    </div>
+
+    <div class="alert-card__body">
+      <div class="alert-card__head">
+        <h2><a href="{% url 'alert_detail' alert.id %}">{{ alert.kind_label }}</a></h2>
+        <span class="chip chip--{{ alert.status }}" data-alert-status="{{ alert.id }}">{{ alert.status_label }}</span>
+        {% if alert.confidence_percent is not None %}<span class="alert-card__confidence">AI信頼度 {{ alert.confidence_percent }}%</span>{% endif %}
+      </div>
+      <p class="alert-card__meta">
+        {{ alert.occurred_at|date:"Y/m/d H:i:s" }} / {{ alert.camera_name }} / {{ alert.location }}
+        / 検知時状態: {{ alert.get_detected_state_display }}
+      </p>
+      <p class="alert-card__responder" data-alert-responder="{{ alert.id }}">
+        {% if alert.responder %}
+          {% if alert.status == 'resolved' %}対応者:{% else %}対応中:{% endif %} <strong>{{ alert.responder.get_full_name|default:alert.responder.username }}</strong>
+        {% else %}
+          対応者: 未割り当て
+        {% endif %}
+      </p>
+      {% if alert.recording_id %}
+        <a href="{% url 'recording_detail' alert.recording_id %}" class="link">🎞 検知瞬間の録画を再生</a>
+      {% endif %}
+    </div>
+
+    <div class="alert-card__actions">
+      {% if alert.status == 'open' %}
+        <form method="post" action="{% url 'alert_respond' alert.id %}">
+          {% csrf_token %}
+          <button type="submit" class="btn btn--primary">対応する</button>
+        </form>
+      {% elif alert.status == 'responding' and alert.responder == user %}
+        <form method="post" action="{% url 'alert_resolve' alert.id %}">
+          {% csrf_token %}
+          <button type="submit" class="btn btn--success">解決・報告を入力</button>
+        </form>
+      {% elif alert.status == 'responding' %}
+        <span class="alert-card__locked">他スタッフが対応中です</span>
+      {% elif alert.status == 'false_positive' %}
+        <span class="alert-card__resolved-note">⚠ 解決済み(誤検知)</span>
+      {% else %}
+        <span class="alert-card__resolved-note">✔ 解決済み・報告入力済</span>
+      {% endif %}
+      <a href="{% url 'alert_detail' alert.id %}" class="btn btn--ghost btn--sm">詳細</a>
+    </div>
+
+  </article>
+  {% empty %}
+  <div class="empty">該当する異常検知はありません</div>
+  {% endfor %}
+</div>
+{% endblock %}

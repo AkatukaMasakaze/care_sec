@@ -1,0 +1,6 @@
+# CARE SEC - 本番環境用（Ubuntu/Linux）
+asgiref==3.12.1
+Django==6.1.2
+gunicorn==23.0.0
+sqlparse==0.6.0
+tzdata==2026.5

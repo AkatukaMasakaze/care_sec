@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+
+{% block title %}ダッシュボード{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>ダッシュボード</h1>
+  <p class="page-header__sub">施設全体の状況まとめ</p>
+</div>
+
+{# ===== サマリカード ===== #}
+<section class="stats-grid">
+  <div class="stat-card stat-card--danger">
+    <span class="stat-card__label">本日の異常検知</span>
+    <span class="stat-card__value">{{ stats.today_alerts|default:0 }}</span>
+    <span class="stat-card__note">昨日: {{ stats.yesterday_alerts|default:0 }} 件</span>
+  </div>
+  <div class="stat-card stat-card--warn">
+    <span class="stat-card__label">未対応の異常</span>
+    <span class="stat-card__value">{{ stats.open_alerts|default:0 }}</span>
+    <span class="stat-card__note">{% if stats.open_alerts %}至急対応してください{% else %}対応漏れはありません{% endif %}</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-card__label">監視中の利用者</span>
+    <span class="stat-card__value">{{ stats.residents|default:0 }}</span>
+    <span class="stat-card__note">名</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-card__label">オンラインカメラ</span>
+    <span class="stat-card__value">{{ stats.cameras_online|default:0 }}<small> / {{ stats.cameras_total|default:0 }}</small></span>
+    <span class="stat-card__note">台</span>
+  </div>
+  <div class="stat-card stat-card--danger">
+    <span class="stat-card__label">未対応</span>
+    <span class="stat-card__value">{{ stats.open_count|default:0 }}</span>
+    <span class="stat-card__note">件</span>
+  </div>
+  <div class="stat-card stat-card--warn">
+    <span class="stat-card__label">対応中</span>
+    <span class="stat-card__value">{{ stats.responding_count|default:0 }}</span>
+    <span class="stat-card__note">件</span>
+  </div>
+  <div class="stat-card stat-card--resolved">
+    <span class="stat-card__label">対応済み</span>
+    <span class="stat-card__value">{{ stats.resolved_count|default:0 }}</span>
+    <span class="stat-card__note">件</span>
+  </div>
+  <div class="stat-card stat-card--fp">
+    <span class="stat-card__label">誤検知</span>
+    <span class="stat-card__value">{{ stats.false_positive_count|default:0 }}</span>
+    <span class="stat-card__note">件 (誤検知率: {{ stats.false_positive_rate|default:0 }}%)</span>
+  </div>
+</section>
+
+<div class="grid-2">
+  {# ===== 直近の異常 ===== #}
+  <section class="card">
+    <div class="card__header">
+      <h2>直近の異常検知</h2>
+      <a href="{% url 'alert_list' %}" class="link">すべて見る →</a>
+    </div>
+    <table class="table">
+      <thead>
+        <tr><th>日時</th><th>場所</th><th>種類</th><th>状況</th></tr>
+      </thead>
+      <tbody>
+        {% for alert in recent_alerts %}
+        <tr>
+          <td>{{ alert.occurred_at|date:"m/d H:i" }}</td>
+          <td>{{ alert.location }}</td>
+          <td>{{ alert.kind_label }}</td>
+          <td><span class="chip chip--{{ alert.status }}">{{ alert.status_label }}</span></td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="4" class="table__empty">異常検知はありません</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  {# ===== 検知傾向(直近7日) ===== #}
+  <section class="card">
+    <div class="card__header">
+      <h2>検知傾向(直近7日)</h2>
+    </div>
+    <ul class="bar-chart">
+      {% for point in weekly_chart %}
+      <li class="bar-chart__item">
+        <span class="bar-chart__value">{{ point.count }}</span>
+        <span class="bar-chart__bar" style="height: {{ point.height_percent }}%"></span>
+        <span class="bar-chart__label">{{ point.label }}</span>
+      </li>
+      {% empty %}
+      <li class="table__empty">集計データがありません</li>
+      {% endfor %}
+    </ul>
+  </section>
+</div>
+
+<div class="grid-2">
+  {# ===== 直近の録画 ===== #}
+  <section class="card">
+    <div class="card__header">
+      <h2>直近の自動録画</h2>
+      <a href="{% url 'recording_list' %}" class="link">すべて見る →</a>
+    </div>
+    <ul class="mini-list">
+      {% for rec in recent_recordings %}
+      <li>
+        <a href="{% url 'recording_detail' rec.id %}">
+          <span class="mini-list__icon">🎞</span>
+          <span class="mini-list__body">
+            <strong>{{ rec.started_at|date:"m/d H:i:s" }}</strong> {{ rec.kind_label }}
+            <small>{{ rec.camera_name }} / {{ rec.duration_label }}</small>
+          </span>
+          <span class="chip chip--{{ rec.kind }}">{{ rec.kind_label }}</span>
+        </a>
+      </li>
+      {% empty %}
+      <li class="table__empty">録画はありません</li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  {# ===== カメラ状態 ===== #}
+  <section class="card">
+    <div class="card__header">
+      <h2>カメラ状態</h2>
+    </div>
+    <ul class="mini-list">
+      {% for camera in cameras %}
+      <li>
+        <span class="mini-list__row">
+          <span class="mini-list__icon">{% if camera.is_online %}<span class="status-dot status-dot--on"></span>{% else %}<span class="status-dot status-dot--off"></span>{% endif %}</span>
+          <span class="mini-list__body">
+            <strong>{{ camera.name }}</strong>
+            <small>{{ camera.location }}</small>
+          </span>
+          <span class="chip {% if camera.is_online %}chip--resolved{% else %}chip--open{% endif %}">{% if camera.is_online %}online{% else %}offline{% endif %}</span>
+        </span>
+      </li>
+      {% empty %}
+      <li class="table__empty">カメラが登録されていません</li>
+      {% endfor %}
+    </ul>
+  </section>
+</div>
+{% endblock %}

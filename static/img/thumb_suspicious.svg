@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="180" viewBox="0 0 300 180">
+  <rect width="300" height="180" fill="#101418"/>
+  <g stroke="#233041" stroke-width="1">
+    <path d="M0 45 H300 M0 90 H300 M0 135 H300 M75 0 V180 M150 0 V180 M225 0 V180"/>
+  </g>
+  <circle cx="150" cy="95" r="14" fill="none" stroke="#f29900" stroke-width="3"/>
+  <path d="M150 109 Q146 132 150 140 M150 118 L134 128 M150 118 L166 128" stroke="#f29900" stroke-width="3" fill="none"/>
+  <rect x="120" y="72" width="60" height="76" fill="none" stroke="#f29900" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="10" y="170" fill="#f29900" font-size="14" font-family="sans-serif" font-weight="bold">SUSPICIOUS BEHAVIOR</text>
+</svg>

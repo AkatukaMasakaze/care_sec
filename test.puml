@@ -1,0 +1,217 @@
+@startuml CARE_SEC_DomainModel
+!theme plain
+title CARE SEC - ドメインモデル図(介護施設 転倒・異常検知システム)
+
+skinparam classAttributeIconSize 0
+skinparam shadowing false
+skinparam packageStyle rectangle
+
+' =====================================================
+' 監視コンテキスト: カメラとAIのライブ解析
+' =====================================================
+package "監視コンテキスト" {
+  class Camera {
+    name : カメラ名
+    location : 設置場所
+    stream_url
+    is_online : bool
+  }
+
+  class PersonDetection {
+    person_key : 人物キー
+    x, y, w, h : バウンディングボックス(%)
+    state : PersonState
+    confidence : 信頼度
+    still_seconds : 無動作秒数
+    alerted : bool
+    updated_at
+  }
+
+  enum PersonState {
+    STANDING : 立っている
+    SITTING : 座っている
+    LYING : 横たわっている
+    UNKNOWN : 不明
+  }
+
+  class AISettings <<シングルトン>> {
+    enabled : bool
+    fall_threshold : 転倒閾値
+    stillness_seconds : 無動作判定秒
+    cooldown_seconds : クールダウン
+    sensitivity : 人物検出感度
+    --
+    +load() : AISettings
+    +tuneOnFalsePositive() : 閾値引上げ
+  }
+}
+
+' =====================================================
+' 検知コンテキスト: 異常検知(集約ルート)
+' =====================================================
+package "検知コンテキスト" {
+  class Alert <<集約ルート>> {
+    kind : AlertKind
+    status : AlertStatus
+    confidence : AI信頼度
+    detected_state : PersonState
+    occurred_at : 発生日時
+    created_at : アラート発生時刻
+    responded_at : 対応開始時刻
+    resolved_at : 対応完了時刻
+    is_false_positive : bool
+    thumbnail_url
+    --
+    +respond(worker) : 対応開始
+    +resolve(worker) : 解決
+    +markFalsePositive(worker) : 誤検知報告
+  }
+
+  enum AlertKind {
+    FALL : 転倒
+    SUSPICIOUS : あやしい動き
+    ZONE : 立ち入り禁止ゾーン
+  }
+
+  enum AlertStatus {
+    OPEN : 未対応
+    RESPONDING : 対応中
+    RESOLVED : 解決済み
+    FALSE_POSITIVE : 誤検知
+  }
+}
+
+' =====================================================
+' 証拠コンテキスト: 自動録画
+' =====================================================
+package "証拠コンテキスト" {
+  class Recording {
+    kind : RecordingKind
+    started_at / ended_at
+    video_url / thumbnail_url
+    reason : 録画理由
+    --
+    +duration_label()
+  }
+
+  class DetectionMarker <<値オブジェクト>> {
+    seconds : 秒位置
+    label : 「転倒の瞬間」等
+  }
+
+  enum RecordingKind {
+    FALL : 転倒の瞬間
+    SUSPICIOUS : あやしい場面
+  }
+}
+
+' =====================================================
+' 対応コンテキスト: 解決報告
+' =====================================================
+package "対応コンテキスト" {
+  class AlertReport {
+    physical_issue : PhysicalIssue
+    injury_detail : 怪我・体調
+    action_taken : 対応内容
+    comment : その他コメント
+    created_at : 報告日
+  }
+
+  enum PhysicalIssue {
+    NONE : なし
+    SUSPECTED : あり(疑い)
+    CONFIRMED : あり(確認)
+    UNKNOWN : 不明
+  }
+}
+
+' =====================================================
+' 施設コンテキスト: 人と場所
+' =====================================================
+package "施設コンテキスト" {
+  class Resident {
+    name : 氏名
+    room_number : 部屋番号
+  }
+
+  class CareWorker <<Django User>> {
+    username
+    last_name / first_name : 介護士名
+    is_staff
+    .. グループ機能は廃止 ..
+  }
+}
+
+' =====================================================
+' 通知コンテキスト(クライアント側 / DB非永続)
+' =====================================================
+package "通知コンテキスト(ブラウザ)" {
+  class AlertPolling <<JS>> {
+    interval : 5秒
+    --
+    GET /api/alerts/
+  }
+
+  class NotificationService <<JS>> {
+    permission : OS通知許可
+    enabled : localStorage設定
+    --
+    +notifyOS() : タブ非活性時のみ
+    +toast() : 画面内通知
+    +beep() : 通知音
+  }
+}
+
+' =====================================================
+' ドメインサービス: AI監視パイプライン
+' =====================================================
+package "ドメインサービス" {
+  class AIMonitor <<バックグラウンドスレッド>> {
+    tick : 2秒間隔
+    --
+    人物検出 → 姿勢推定 → 異常検知
+    +raiseAlert() : Alert + Recording 生成
+  }
+}
+
+' =====================================================
+' 関連
+' =====================================================
+Camera "1" o-- "0..*" PersonDetection : ライブ検知 >
+PersonDetection --> PersonState
+Alert --> AlertKind
+Alert --> AlertStatus
+Alert "0..*" --> "1" Camera : 発生元
+Alert "0..*" --> "0..1" CareWorker : 対応者(responder)
+
+Alert "1" -- "0..1" Recording : 証拠(自動録画)
+Recording --> RecordingKind
+Recording "1" *-- "0..*" DetectionMarker : 検知マーク
+
+Alert "1" -- "0..1" AlertReport : 解決報告
+AlertReport --> PhysicalIssue
+AlertReport "0..*" --> "1" CareWorker : 報告者(author)
+AlertReport "0..*" --> "0..1" Resident : 対象の利用者
+
+AIMonitor ..> Camera : 読取
+AIMonitor ..> PersonDetection : 生成/更新
+AIMonitor ..> Alert : 生成
+AIMonitor ..> Recording : 生成
+AIMonitor ..> AISettings : 閾値参照
+Alert ..> AISettings : 誤検知フィードバック\n(転倒閾値を自動引上げ)
+
+AlertPolling ..> Alert : ポーリング
+NotificationService ..> AlertPolling : 新規異常を受信
+
+' =====================================================
+' Alert の状態遷移(ライフサイクル)
+' =====================================================
+note right of Alert
+  **状態遷移**
+  OPEN --respond()--> RESPONDING
+  RESPONDING --resolve()--> RESOLVED
+  OPEN/RESPONDING --markFalsePositive()--> FALSE_POSITIVE
+  (resolved_atに応答/完了時刻を記録)
+end note
+
+@enduml

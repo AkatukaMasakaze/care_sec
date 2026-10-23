@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block title %}録画一覧{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>録画一覧</h1>
+  <p class="page-header__sub">AI監視が自動録画した「転倒の瞬間・あやしい場面」の映像一覧</p>
+</div>
+
+<div class="filter-bar">
+  <a href="{% url 'recording_list' %}" class="filter-chip{% if current_kind == '' %} is-selected{% endif %}">すべて</a>
+  <a href="?kind=fall" class="filter-chip{% if current_kind == 'fall' %} is-selected{% endif %}">転倒の瞬間</a>
+  <a href="?kind=suspicious" class="filter-chip{% if current_kind == 'suspicious' %} is-selected{% endif %}">あやしい場面</a>
+</div>
+
+<div class="recording-grid">
+  {% for rec in recordings %}
+  <a class="recording-card" href="{% url 'recording_detail' rec.id %}">
+    <div class="recording-card__thumb">
+      {% if rec.thumbnail_url %}
+        <img src="{{ rec.thumbnail_url }}" alt="{{ rec.kind_label }} サムネイル">
+      {% else %}
+        <div class="recording-card__thumb-placeholder">🎞</div>
+      {% endif %}
+      <span class="recording-card__play" aria-hidden="true">▶</span>
+      <span class="recording-card__duration">{{ rec.duration_label }}</span>
+    </div>
+    <div class="recording-card__meta">
+      <strong>{{ rec.started_at|date:"Y/m/d H:i:s" }}</strong>
+      <span class="chip chip--{{ rec.kind }}">{{ rec.kind_label }}</span>
+      <p>{{ rec.camera_name }} / {{ rec.location }}</p>
+      {% if rec.alert_id %}
+        <small>異常検知 #{{ rec.alert_id }} 関連</small>
+      {% endif %}
+    </div>
+  </a>
+  {% empty %}
+  <div class="empty">録画はありません</div>
+  {% endfor %}
+</div>
+{% endblock %}

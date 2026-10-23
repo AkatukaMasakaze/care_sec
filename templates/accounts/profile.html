@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+
+{% block title %}プロフィール／解決報告{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>プロフィール／解決報告</h1>
+  <p class="page-header__sub">解決した問題の報告入力と、これまでの報告履歴</p>
+</div>
+
+<div class="grid-2">
+  {# ===== プロフィール情報 ===== #}
+  <section class="card profile-card">
+    <div class="profile-card__avatar" aria-hidden="true">
+      {{ user.get_full_name|default:user.username|slice:":1" }}
+    </div>
+    <h2>{{ user.get_full_name|default:user.username }}</h2>
+    <p class="muted">@{{ user.username }} / {{ profile.role|default:"介護スタッフ" }}</p>
+    <dl class="profile-card__meta">
+      <dt>所属施設</dt><dd>{{ profile.facility|default:"-" }}</dd>
+      <dt>メールアドレス</dt><dd>{{ user.email|default:"-" }}</dd>
+      <dt>最終ログイン</dt><dd>{{ user.last_login|date:"Y/m/d H:i" }}</dd>
+      <dt>対応件数(累計)</dt><dd>{{ profile.resolved_count|default:0 }} 件</dd>
+    </dl>
+  </section>
+
+  {# ===== 通知設定 ===== #}
+  <section class="card">
+    <div class="card__header">
+      <h2>通知設定</h2>
+    </div>
+    <div class="notification-settings">
+      <p class="muted">ブラウザのOS通知を有効/無効にできます。</p>
+      <div class="notification-toggle">
+        <label class="toggle-switch">
+          <input type="checkbox" id="notification-toggle" checked>
+          <span class="toggle-slider"></span>
+        </label>
+        <span id="notification-status">通知有効</span>
+      </div>
+      <p class="field__help">
+        無効にすると、OS通知は送信されません（トースト通知は表示されます）。<br>
+        ブラウザの通知許可設定も確認してください。
+      </p>
+    </div>
+  </section>
+
+  {# ===== 解決報告入力 ===== #}
+  <section class="card" id="report-form">
+    <div class="card__header">
+      <h2>解決報告の入力</h2>
+    </div>
+    {% if target_alert %}
+      <div class="report-target">
+        <strong>対象の異常:</strong>
+        {{ target_alert.kind_label }} /
+        {{ target_alert.occurred_at|date:"Y/m/d H:i:s" }} /
+        {{ target_alert.location }}
+        {% if target_alert.recording_id %}
+          <a href="{% url 'recording_detail' target_alert.recording_id %}" class="link">🎞 録画を確認</a>
+        {% endif %}
+      </div>
+      {% include "includes/report_form.html" %}
+    {% else %}
+      <p class="muted">
+        報告待ちの異常はありません。<br>
+        異常検知タブで「解決・報告を入力」を押すと、この画面に報告フォームが表示されます。
+      </p>
+      <a href="{% url 'alert_list' %}" class="btn btn--ghost">異常検知タブへ</a>
+    {% endif %}
+  </section>
+</div>
+
+{# ===== 自分の報告履歴 ===== #}
+<section class="card">
+  <div class="card__header">
+    <h2>これまでの報告履歴</h2>
+  </div>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>報告日</th><th>異常の種類</th><th>利用者</th><th>身体的問題</th><th>対応内容</th><th>コメント</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for report in my_reports %}
+      <tr>
+        <td>{{ report.created_at|date:"Y/m/d H:i" }}</td>
+        <td>{{ report.alert.kind_label }}</td>
+        <td>{{ report.resident_name|default:"-" }}</td>
+        <td><span class="chip chip--physical-{{ report.physical_issue }}">{{ report.physical_issue_label }}</span></td>
+        <td>{{ report.action_taken|truncatechars:40 }}</td>
+        <td>{{ report.comment|truncatechars:40|default:"-" }}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="6" class="table__empty">報告履歴はありません</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
