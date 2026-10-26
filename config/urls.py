@@ -20,6 +20,8 @@ urlpatterns = [
          name="login"),
     path("accounts/logout/", views.logout_view, name="logout"),
     path("accounts/profile/", views.profile, name="profile"),
+    path("accounts/settings/", views.settings_page, name="settings"),
+    path("accounts/settings/action/", views.settings, name="settings_action"),
     path("reports/create/", views.report_create, name="report_create"),
 
 

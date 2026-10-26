@@ -64,7 +64,7 @@
   });
 
   /* ---------- Web Notifications API(OS通知) ---------- */
-  var notificationEnabled = localStorage.getItem('caresec_notifications') !== 'disabled';
+  var notificationEnabled = localStorage.getItem('care_alerts_enabled') !== 'false';
 
   function requestNotificationPermission() {
     if (!('Notification' in window)) {
@@ -76,13 +76,16 @@
       return;
     }
 
-    if (Notification.permission !== 'denied') {
-      Notification.requestPermission().then(function (permission) {
-        if (permission === 'granted') {
-          console.log('通知が許可されました');
-        }
-      });
+    if (Notification.permission === 'denied') {
+      console.log('通知はブロックされています');
+      return;
     }
+
+    Notification.requestPermission().then(function (permission) {
+      if (permission === 'granted') {
+        console.log('通知が許可されました');
+      }
+    });
   }
 
   function sendOSNotification(title, options) {
@@ -108,15 +111,15 @@
     }
   }
 
-  // 初回訪問時に通知許可を要求
-  if (notificationEnabled) {
+  // 初回訪問時に通知許可を要求（一度だけ、許可/拒否済みはスキップ）
+  if (notificationEnabled && Notification.permission === 'default') {
     requestNotificationPermission();
   }
 
-  // 通知設定変更イベント(設定ページから)
+  // 通知設定変更イベント(他タブから)
   window.addEventListener('storage', function (e) {
-    if (e.key === 'caresec_notifications') {
-      notificationEnabled = e.newValue !== 'disabled';
+    if (e.key === 'care_alerts_enabled') {
+      notificationEnabled = e.newValue !== 'false';
     }
   });
 
@@ -258,14 +261,14 @@
 
   if (notificationToggle) {
     // 初期状態を設定
-    var isEnabled = localStorage.getItem('caresec_notifications') !== 'disabled';
+    var isEnabled = localStorage.getItem('care_alerts_enabled') !== 'false';
     notificationToggle.checked = isEnabled;
     updateNotificationStatus(isEnabled);
 
     // トグル変更時
     notificationToggle.addEventListener('change', function () {
       var enabled = this.checked;
-      localStorage.setItem('caresec_notifications', enabled ? 'enabled' : 'disabled');
+      localStorage.setItem('care_alerts_enabled', enabled ? 'true' : 'false');
       updateNotificationStatus(enabled);
 
       if (enabled) {

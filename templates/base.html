@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}ダッシュボード{% endblock %}｜CARE SEC 転倒・異常検知システム</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 <link rel="stylesheet" href="{% static 'css/style.css' %}">
 {% block extra_head %}{% endblock %}
 </head>
@@ -20,10 +21,11 @@
       <span class="hamburger__line"></span>
       <span class="hamburger__line"></span>
     </button>
-
+    {% comment %} ◉ {% endcomment %}
     <div class="topbar__brand">
-      <span class="topbar__logo" aria-hidden="true">◉</span>
-      <span class="topbar__name">CARE SEC<small>転倒・異常検知システム</small></span>
+      {% comment %} <span class="topbar__logo" aria-hidden="true">😤</span>
+      <span class="topbar__name">CARE SEC<small>転倒・異常検知システム</small></span> {% endcomment %}
+      <img src="{% static 'img/image1.svg' %}" alt="アイコン" style="width: 10em; height: auto;">
     </div>
 
     <div class="topbar__info">
@@ -35,7 +37,7 @@
 
     <div class="topbar__user">
       {% if user.is_authenticated %}
-        <a class="topbar__username" href="{% url 'profile' %}">👤 {{ user.get_full_name|default:user.username }}</a>
+        <a class="topbar__username" href="{% url 'profile' %}"><i class="fa-solid fa-circle-user"></i> {{ user.get_full_name|default:user.username }}</a>
         <form method="post" action="{% url 'logout' %}" class="inline-form">
           {% csrf_token %}
           <button type="submit" class="btn btn--ghost btn--sm">ログアウト</button>
@@ -50,26 +52,30 @@
   <nav class="sidebar" id="sidebar" aria-label="メインメニュー">
     {# モバイル用ロゴ(480px以下で表示) #}
     <div class="sidebar__logo">
-      <span class="sidebar__logo-icon" aria-hidden="true">◉</span>
-      <span class="sidebar__logo-text">CARE SEC</span>
-      <small>転倒・異常検知システム</small>
+      {% comment %} <span class="sidebar__logo-icon" aria-hidden="true">◉</span>
+      <span class="sidebar__logo-text">CARE SEC</span> {% endcomment %}
+      <img src="{% static 'img/file.svg' %}" alt="アイコン" style="width: 14em; height: auto;">
+
     </div>
 
     <ul class="menu">
       <li class="menu__item{% if request.resolver_match.url_name == 'dashboard' %} is-active{% endif %}">
-        <a href="{% url 'dashboard' %}"><span class="menu__icon">🏠</span>ダッシュボード</a>
+        <a href="{% url 'dashboard' %}"><span class="menu__icon"><i class="fa-solid fa-chart-bar"></i></span>ダッシュボード</a>
       </li>
 
       <li class="menu__item{% if request.resolver_match.url_name == 'alert_list' %} is-active{% endif %}">
-        <a href="{% url 'alert_list' %}"><span class="menu__icon">🚨</span>異常検知
+        <a href="{% url 'alert_list' %}"><span class="menu__icon"><i class="fa-solid fa-triangle-exclamation" style="color: rgb(215, 30, 30);"></i></span>異常検知
           <span class="menu__badge" id="sidebar-alert-count"{% if not open_alert_count %} hidden{% endif %}>{{ open_alert_count|default:0 }}</span>
         </a>
       </li>
       <li class="menu__item{% if request.resolver_match.url_name == 'recording_list' %} is-active{% endif %}">
-        <a href="{% url 'recording_list' %}"><span class="menu__icon">🎞</span>録画一覧</a>
+        <a href="{% url 'recording_list' %}"><span class="menu__icon"><i class="fa-solid fa-video"></i></span>録画一覧</a>
       </li>
       <li class="menu__item{% if request.resolver_match.url_name == 'profile' %} is-active{% endif %}">
-        <a href="{% url 'profile' %}"><span class="menu__icon">👤</span>プロフィール／報告</a>
+        <a href="{% url 'profile' %}"><span class="menu__icon"><i class="fa-solid fa-circle-user"></i></span>プロフィール／報告</a>
+      </li>
+      <li class="menu__item{% if request.resolver_match.url_name == 'settings' %} is-active{% endif %}">
+        <a href="{% url 'settings' %}"><span class="menu__icon"><i class="fa-solid fa-gear"></i></span>設定</a>
       </li>
     </ul>
     <div class="sidebar__footer">

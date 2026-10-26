@@ -227,6 +227,65 @@ def profile(request):
 
 @login_required
 @require_POST
+def settings(request):
+    """設定ページのPOST処理（データ削除・AI切替・手動検知）"""
+    from core.models import AISettings
+
+    ai = AISettings.load()
+    action = request.POST.get("action")
+
+    if action == "clear_all_data":
+        # 全異常・録画・解決報告・人物検知を削除
+        AlertReport.objects.all().delete()
+        Recording.objects.all().delete()
+        Alert.objects.all().delete()
+        PersonDetection.objects.all().delete()
+        messages.success(request, "すべての検知データ・録画・解決報告を削除しました。")
+
+    elif action == "toggle_ai_on":
+        # AI自動検知をオンにする
+        ai.enabled = True
+        ai.save(update_fields=["enabled"])
+        messages.success(request, "AI監視を稼働しました。")
+
+    elif action == "toggle_ai_off":
+        # AI自動検知をオフにする
+        ai.enabled = False
+        ai.save(update_fields=["enabled"])
+        messages.success(request, "AI監視を停止しました。")
+
+    elif action == "manual_alert":
+        # 手動で異常検知を1件発生（カメラCAM-01に転倒を検知）
+        camera = Camera.objects.filter(is_online=True).first()
+        if camera:
+            Alert.objects.create(
+                kind=Alert.Kind.FALL,
+                confidence=0.95,
+                detected_state=Alert.Kind.FALL,
+                camera=camera,
+                occurred_at=timezone.now(),
+                status=Alert.Status.OPEN,
+                thumbnail_url="/static/img/thumb_fall.svg",
+            )
+            messages.success(request, f"手動で異常検知を発生させました（{camera.name}）。")
+        else:
+            messages.warning(request, "オンラインのカメラが見つかりません。")
+
+    return redirect("settings")
+
+
+@login_required
+def settings_page(request):
+    """設定ページ（GET）"""
+    from core.models import AISettings
+    ai = AISettings.load()
+    return render(request, "accounts/settings.html", {
+        "ai_settings": ai,
+    })
+
+
+@login_required
+@require_POST
 def report_create(request):
     alert = get_object_or_404(
         Alert, id=request.POST.get("alert", ""),

@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block title %}設定｜CARE SEC 転倒・異常検知システム{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>設定</h1>
+  <p class="page-header__sub">システム設定や通知設定を変更できます</p>
+</div>
+
+<div class="grid-2">
+  {# ===== 通知設定 ===== #}
+  <section class="card">
+    <div class="card__header">
+      <h2>通知設定</h2>
+    </div>
+    <div class="notification-settings">
+      <p class="muted">ブラウザのOS通知を有効/無効にできます。</p>
+      <div class="notification-toggle">
+        <label class="toggle-switch">
+          <input type="checkbox" id="notification-toggle" checked>
+          <span class="toggle-slider"></span>
+        </label>
+        <span id="notification-status">通知有効</span>
+      </div>
+      <p class="field__help">
+        無効にすると、OS通知は送信されません（トースト通知は表示されます）。<br>
+        ブラウザの通知許可設定も確認してください。
+      </p>
+    </div>
+  </section>
+
+  {# ===== AI設定（閲覧のみ） ===== #}
+  <section class="card">
+    <div class="card__header">
+      <h2>AI検知設定（閲覧のみ）</h2>
+    </div>
+    <table class="table">
+      <thead>
+        <tr><th>項目</th><th>値</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>AI監視稼働</td><td>{{ ai_settings.enabled|yesno:"稼働中,停止中" }}</td></tr>
+        <tr><td>転倒検知信頼度閾値</td><td>{{ ai_settings.fall_threshold }}</td></tr>
+        <tr><td>無動作検知秒数</td><td>{{ ai_settings.stillness_seconds }} 秒</td></tr>
+        <tr><td>アラートクールダウン</td><td>{{ ai_settings.cooldown_seconds }} 秒</td></tr>
+        <tr><td>人物検出感度</td><td>{{ ai_settings.sensitivity }}</td></tr>
+      </tbody>
+    </table>
+    <p class="field__help">AI設定は自動調整されるため、手動変更はできません。</p>
+  </section>
+
+  {# ===== デモ：AI自動検知・手動検知 ===== #}
+  <section class="card demo-card">
+    <div class="card__header">
+      <h2>デモ：AI自動検知</h2>
+    </div>
+    <form method="post" action="{% url 'settings_action' %}" id="demo-form">
+      {% csrf_token %}
+      <input type="hidden" name="action" id="demo-action" value="">
+      <div class="demo-controls">
+        <div class="toggle-group">
+          <label class="toggle-switch">
+            <input type="checkbox" id="ai-auto-toggle"
+                   {% if ai_settings.enabled %}checked{% endif %}
+                   onchange="toggleAI(this)">
+            <span class="toggle-slider"></span>
+          </label>
+          <span class="toggle-label" id="ai-status">
+            {{ ai_settings.enabled|yesno:"AI自動検知: ON,AI自動検知: 停止" }}
+          </span>
+        </div>
+        <button type="button" onclick="submitManualAlert()" class="btn btn--primary">
+          🚨 手動で異常検知を発生させる
+        </button>
+      </div>
+      <p class="field__help">
+        手動で異常検知を1件発生させます（オンラインのカメラに転倒を検知）。<br>
+        自動検知は「AI自動検知」のオン/オフで制御されます。
+      </p>
+    </form>
+    <script>
+      function toggleAI(checkbox) {
+        document.getElementById('demo-action').value = checkbox.checked ? 'toggle_ai_on' : 'toggle_ai_off';
+        document.getElementById('demo-form').submit();
+      }
+      function submitManualAlert() {
+        document.getElementById('demo-action').value = 'manual_alert';
+        document.getElementById('demo-form').submit();
+      }
+    </script>
+  </section>
+
+  {# ===== データ削除（管理） ===== #}
+  <section class="card danger-card">
+    <div class="card__header">
+      <h2>データ削除（管理）</h2>
+    </div>
+    <form method="post" action="{% url 'settings_action' %}" onsubmit="return confirm('本当にすべての異常検知・録画・解決報告を削除しますか？この操作は元に戻せません。');">
+      {% csrf_token %}
+      <button type="submit" name="action" value="clear_all_data" class="btn btn--danger btn--block">
+        🗑️ 全異常・録画・解決報告を削除
+      </button>
+      <p class="field__help">
+        全ての異常検知記録・自動録画・解決報告・人物検知履歴を削除します。<br>
+        カメラ・利用者マスタはそのまま残ります。
+      </p>
+    </form>
+  </section>
+</div>
+{% endblock %}
