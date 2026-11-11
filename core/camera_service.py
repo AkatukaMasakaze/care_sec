@@ -690,7 +690,8 @@ def _acquire_network(cv2, key):
             "last_reconnect": 0.0,
             "info": _network_info(key, url, frame, cap),
             # ---- 最新1枚だけを残す枠(読取スレッドが更新する) ----
-            "frame": frame,
+            # frame もここでコピーしておく(以降の cap.read() で内部バッファが再利用される)
+            "frame": frame.copy(),
             "seq": 1,
             "ts": time.monotonic(),
             "served": 0,
@@ -733,8 +734,13 @@ def _reader_loop(cv2, key, stream):
             ok, frame = False, None
             print(f"[CameraReader:{key}] 読取例外 {type(exc).__name__}: {exc}")
         if ok and frame is not None:
+            # **ここで必ずコピーする。** OpenCV/FFmpeg が返す配列は内部バッファを
+            # 参照しているだけで、次の read() で再利用・解放される。スレッドが
+            # 読み進めた後に別スレッドが触ると use-after-free になり、
+            # Pythonのトレースバック無しでプロセスごと落ちる
+            # (実測: Windows イベントログ 0xc0000374 = heap corruption, ntdll.dll)。
             with stream["frame_lock"]:
-                stream["frame"] = frame
+                stream["frame"] = frame.copy()
                 stream["seq"] += 1
                 stream["ts"] = time.monotonic()
             continue
@@ -889,7 +895,8 @@ def read_frame(index):
     with stream["lock"]:
         ok, frame = stream["cap"].read()
         if ok and frame is not None:
-            return frame
+            # 上と同じ理由でコピーして渡す(USBでも「読み進めた後に触る」事故を防ぐ)
+            return frame.copy()
     return None
 
 

@@ -1253,3 +1253,63 @@ CSI imx219: 115〜172 (焦点固定)
 2. 設定で色をどうにかする必要は**ない**(上記の実測で効果なし)
 3. 3台同時稼働時のfpsは index0 19〜23 / cam:10 22〜24 / cam:9 26〜27 に落ちた(CPU占有)。
    **遅延は 0.01〜0.04秒のまま**なので検知には影響なし(第21章の設計どおり)
+
+---
+
+## 29. 2026-11-11 プロセスがトレースバック無しで落ちる(ヒープ破損)を修正
+
+ai2 が「何も出力せず死ぬ」ことがあり、Windowsイベントログを確認した。
+
+```
+2026-11-10 12:04:26  Application Error  python.exe  例外コード 0xc0000374  ntdll.dll
+2026-11-11 10:51:13  Application Error  python.exe  例外コード 0xc0000374  ntdll.dll
+                     (0xc0000374 = STATUS_HEAP_CORRUPTION)
+```
+
+**帰属は正しく分けておく**(過剰に結論しない):
+
+| 事象 | 判定 |
+|---|---|
+| 11/10 12:04 のヒープ破損 | **本物のクラッシュ**。当時のコードは下記の aliasing 問題を持っていた |
+| 11/11 10:51 のヒープ破損 | 私が `Stop-Process` で殺した**直後**の時刻。落とす最中に native スレッドが壊した可能性が高く、自発クラッシュとは限らない |
+| 11/11 11:49 の停止 | **Application Error イベント無し** = クラッシュではなく外部終了(シェル側の記録消失と同時)。今回の修正とは無関係 |
+
+### 実在したバグ(修正した)
+`cv2.VideoCapture.read()` が返す配列は**内部バッファを参照しているだけ**で、
+次の `read()` で再利用・解放される(OpenCVの既知の約束事: 「次に読むまでしか有効でない」)。
+
+第21章で入れた専有読取スレッドは、その配列をスロットに**そのまま**保存し、
+解析スレッドが**後から** `frame.copy()` して overlay を描画していた。
+読取スレッドが先に読み進めると、解析スレッドが触るのは**解放済み/再利用済みのメモリ**
+→ use-after-free → ヒープ破損。11/10 のクラッシュと整合する。
+
+同じ危険はUSB側にもあった(`_loop` が `cap.read()` の配列へ overlay を in-place 描画)。
+
+### 修正(`core/camera_service.py`)
+| 場所 | 内容 |
+|---|---|
+| `_reader_loop` | `stream["frame"] = frame.copy()` — **読んだ直後にコピー**してスロットへ置く |
+| `_acquire_network` | 初フレームも `frame.copy()` で保存 |
+| `read_frame`(USB側) | `return frame.copy()` — 呼び出し側が後で描画・保存しても安全 |
+
+代价は 1枚あたりコピー2回(640x480x3 ≒ 0.3ms × 2 × 30fps ≒ 1.8%/core)で、実測fpsは変らなかった。
+
+### 修正後の稼働確認(3台同時)
+```
+ 0s  index0 error(起動直後)  cam:10 error(起動直後)  cam:9 running 27.6fps age 0.03
+15s  index0 running 25.2     cam:10 running 24.9      cam:9  running 24.7 age 0.03
+30s  index0 running 26.3     cam:10 running 18.1      cam:9  running 21.9 age 0.03
+45s  index0 running 24.9     cam:10 running 18.4      cam:9  running 25.4 age 0.03
+```
+**注意**: 起動直後の1巡目は `error`(1フレームも取れない)が出ることがあり、**15〜30秒で自動復帰**する。
+常時稼働は1台ずつ順に開くため、USBカメラが落ち着くまでの一時的な状態。クラッシュと見間違えないこと。
+
+### 再発時の確認手順
+```powershell
+Get-WinEvent -FilterHashtable @{LogName='Application'; Level=2} -MaxEvents 60 |
+  Where-Object { $_.Message -match 'python' } |
+  Select-Object TimeCreated, ProviderName, @{n='msg';e={ ($_.Message -split "`n")[0..4] -join ' | ' }}
+```
+- `0xc0000374` = ヒープ破損(native のメモリ所有権の問題。OpenCV/Driver周りを疑う)
+- `0xc0000005` = アクセス違反
+- **イベントが無いのに止まっている**なら、クラッシュではなく外部終了(シェル/OS/手動停止)
