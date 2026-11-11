@@ -1,0 +1,1981 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CARE SEC 画面機能 実装手順書</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --surface: #ffffff; --text: #1f2328; --muted: #5b6470;
+    --border: #d5dae0; --primary: #1f5f8b; --primary-weak: #e6f0f7;
+    --ok: #2e6b33; --ok-bg: #e5f3e6; --warn: #8a5200; --warn-bg: #fdf0d9;
+    --ng: #b3261e; --ng-bg: #fbe6e4; --code-bg: #f0f2f5; --code-text: #1f2328;
+    --comment: #4a7a4f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15181c; --surface: #1d2126; --text: #e4e7eb; --muted: #9aa4b0;
+      --border: #333a43; --primary: #7db8e0; --primary-weak: #1f2f3c;
+      --ok: #8fd096; --ok-bg: #1e3221; --warn: #f0c070; --warn-bg: #3a2c12;
+      --ng: #f29a93; --ng-bg: #3d1f1d; --code-bg: #12151a; --code-text: #dfe3e8;
+      --comment: #8fc095;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; scroll-padding-top: 16px; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", "Hiragino Sans", "Yu Gothic UI", Meiryo, sans-serif;
+    line-height: 1.75; font-size: 15px;
+  }
+  a { color: var(--primary); }
+  .wrap { display: grid; grid-template-columns: 270px minmax(0, 1fr); max-width: 1320px; margin: 0 auto; }
+  nav.toc {
+    position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto;
+    padding: 20px 16px; border-right: 1px solid var(--border); font-size: 13.5px;
+  }
+  nav.toc h2 { font-size: 14px; margin: 0 0 8px; color: var(--muted); letter-spacing: .05em; }
+  nav.toc ol { list-style: none; margin: 0; padding: 0; }
+  nav.toc li a { display: block; padding: 4px 8px; border-radius: 4px; text-decoration: none; color: var(--text); }
+  nav.toc li a:hover { background: var(--primary-weak); }
+  nav.toc li.sub a { padding-left: 22px; color: var(--muted); }
+  main { padding: 28px 32px 80px; min-width: 0; }
+  header.doc h1 { font-size: 26px; margin: 0 0 4px; line-height: 1.35; }
+  header.doc p { margin: 0; color: var(--muted); }
+  section { margin-top: 44px; }
+  h2 { font-size: 21px; border-bottom: 2px solid var(--primary); padding-bottom: 6px; margin: 0 0 14px; }
+  h3 { font-size: 17px; margin: 30px 0 8px; padding-left: 10px; border-left: 4px solid var(--primary); }
+  h4 { font-size: 15px; margin: 20px 0 6px; }
+  p { margin: 8px 0; }
+  ul, ol { padding-left: 1.5em; }
+  code { font-family: Consolas, "Cascadia Mono", Menlo, monospace; font-size: .92em; background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+  .table-scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; background: var(--surface); font-size: 14px; }
+  th, td { border: 1px solid var(--border); padding: 7px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--primary-weak); white-space: nowrap; }
+  .badge { display: inline-block; padding: 0 8px; border-radius: 10px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .badge.ok { color: var(--ok); background: var(--ok-bg); }
+  .badge.warn { color: var(--warn); background: var(--warn-bg); }
+  .badge.ng { color: var(--ng); background: var(--ng-bg); }
+  .badge.opt { color: var(--muted); background: var(--code-bg); }
+  .note { border: 1px solid var(--border); border-left: 5px solid var(--primary); background: var(--surface); padding: 10px 14px; border-radius: 4px; margin: 14px 0; }
+  .note.warn { border-left-color: var(--warn); }
+  .note.ng { border-left-color: var(--ng); }
+  .note strong:first-child { display: block; }
+  figure.code { margin: 12px 0 18px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: var(--code-bg); }
+  figure.code figcaption { display: flex; gap: 8px; align-items: center; padding: 5px 10px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 13px; }
+  figure.code .path { font-family: Consolas, Menlo, monospace; font-weight: 600; }
+  figure.code .kind { color: var(--muted); }
+  figure.code button { margin-left: auto; font: inherit; font-size: 12px; padding: 1px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); cursor: pointer; }
+  pre { margin: 0; padding: 12px 14px; overflow-x: auto; font-family: Consolas, "Cascadia Mono", Menlo, monospace; font-size: 13px; line-height: 1.6; color: var(--code-text); tab-size: 4; }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre .c { color: var(--comment); }
+  .step-check { display: flex; gap: 8px; align-items: flex-start; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 8px 12px; margin: 12px 0; }
+  .step-check input { margin-top: 6px; }
+  .flow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 12px 0; font-size: 13.5px; }
+  .flow span { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 4px 10px; }
+  .flow i { color: var(--muted); font-style: normal; }
+  @media (max-width: 900px) {
+    .wrap { grid-template-columns: 1fr; }
+    nav.toc { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--border); }
+    main { padding: 20px 16px 60px; }
+  }
+  @media print {
+    nav.toc, figure.code button { display: none; }
+    .wrap { display: block; }
+    pre { white-space: pre-wrap; word-break: break-all; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<nav class="toc" aria-label="目次">
+  <h2>目次</h2>
+  <ol>
+    <li><a href="#about">この手順書について</a></li>
+    <li><a href="#survey">1. 現状調査の結果</a></li>
+    <li><a href="#step0">STEP 0. 環境構築と起動</a></li>
+    <li><a href="#step1">STEP 1. 共通レイアウト</a></li>
+    <li class="sub"><a href="#step1-1">1-1 操作結果メッセージ</a></li>
+    <li class="sub"><a href="#step1-2">1-2 AI監視の稼働表示</a></li>
+    <li class="sub"><a href="#step1-3">1-3 ログイン後の遷移先</a></li>
+    <li class="sub"><a href="#step1-4">1-4 通知のURL直書き</a></li>
+    <li><a href="#step2">STEP 2. ダッシュボード</a></li>
+    <li><a href="#step3">STEP 3. 異常検知(一覧・詳細)</a></li>
+    <li><a href="#step4">STEP 4. プロフィール/解決報告</a></li>
+    <li><a href="#step5">STEP 5. 設定画面</a></li>
+    <li><a href="#step6">STEP 6. 録画一覧・再生</a></li>
+    <li><a href="#step7">STEP 7. カメラデバッグ画面</a></li>
+    <li class="sub"><a href="#step7-1">7-1 URLとビュー</a></li>
+    <li class="sub"><a href="#step7-2">7-2 検知の進行バー</a></li>
+    <li class="sub"><a href="#step7-3">7-3 画面側JS</a></li>
+    <li><a href="#step8">STEP 8. リアルタイムAI</a></li>
+    <li class="sub"><a href="#step8-1">8-1 モデルの準備と学習</a></li>
+    <li class="sub"><a href="#step8-2">8-2 解析エンジン</a></li>
+    <li class="sub"><a href="#step8-3">8-3 起動制御</a></li>
+    <li class="sub"><a href="#step8-4">8-4 映像配信の切り替え</a></li>
+    <li class="sub"><a href="#step8-5">8-5 立ち入り禁止ゾーン</a></li>
+    <li><a href="#step9">STEP 9. 動作検証</a></li>
+    <li><a href="#appendix">付録</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="doc">
+  <h1>CARE SEC 転倒・異常検知システム<br>画面機能 実装手順書</h1>
+  <p>対象リポジトリ: care_sec(main / 879d8b6 時点) ・ 作成日: 2026-11-11</p>
+</header>
+
+<!-- ============================================================ -->
+<section id="about">
+  <h2>この手順書について</h2>
+  <p>
+    <code>templates/</code> 配下の全画面に表示されているボタン・表示項目を洗い出し、
+    <strong>それぞれが現在のバックエンドで動くか</strong>をコードと突き合わせて確認しました。
+    本書は「まだ動かない/見かけだけの機能」を動く状態にするまでの手順を、画面単位でまとめたものです。
+  </p>
+  <div class="table-scroll">
+  <table>
+    <tr><th>凡例</th><th>意味</th></tr>
+    <tr><td><span class="badge ok">実装済</span></td><td>現在のコードで動く。作業不要</td></tr>
+    <tr><td><span class="badge warn">要修正</span></td><td>動くが不具合・見かけだけ・デモ値固定などがある</td></tr>
+    <tr><td><span class="badge ng">未実装</span></td><td>画面にはあるがバックエンドが無い(またはエラーになる)</td></tr>
+    <tr><td><span class="badge opt">任意</span></td><td>無くても画面は成立するが、運用上あった方がよい</td></tr>
+  </table>
+  </div>
+  <div class="note warn">
+    <strong>最初に確認してほしいこと</strong>
+    <code>INTEGRATION_STATUS.md</code> には <code>core/ai_engine.py</code>・<code>core/training.py</code>・<code>ai_models/</code> などを
+    実装・検証済みと書かれていますが、<strong>これらはリポジトリに含まれていません</strong>(別マシンの作業フォルダに残っていると思われます)。
+    そのファイル一式が手元にあるなら、アップロードするのが最短です。本書の STEP 7〜8 は、それが無い前提で
+    <strong>同等の機能を最小構成で作り直す手順</strong>です。
+  </div>
+  <div class="note">
+    <strong>サンプルコードの扱い</strong>
+    サンプルは既存コードの命名・構成に合わせて書いています。Python部分は構文チェックのみ実施しており、
+    カメラ・TensorFlow・MediaPipe を使う部分は<strong>この環境では実行確認していません</strong>。
+    組み込み後は STEP 9 の検証を必ず実施してください。
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section id="survey">
+  <h2>1. 現状調査の結果</h2>
+
+  <h3>特に影響が大きい問題</h3>
+  <ol>
+    <li><strong>カメラデバッグ画面が開けない。</strong>
+      <code>templates/debug/camera.html</code> が URL名 <code>debug_camera_detect_progress</code> と
+      <code>debug_camera_ai_status</code> を参照していますが、<code>config/urls.py</code> に定義がありません。
+      <code>{% url %}</code> の解決に失敗し、ページ全体がエラー(NoReverseMatch)になります。→ <a href="#step7">STEP 7</a></li>
+    <li><strong>ログイン後に存在しないURLへ飛ぶ。</strong>
+      <code>login.html</code> の <code>next</code> が <code>/dev/var6/</code> に固定されています。
+      ローカルではログイン成功直後に 404 になります。→ <a href="#step1-3">STEP 1-3</a></li>
+    <li><strong>実カメラのAI解析が無い。</strong>
+      異常はデモ用シミュレーター(<code>core/ai_simulator.py</code>)が乱数で作っています。
+      録画も外部サンプル動画のURLを入れているだけです。→ <a href="#step8">STEP 8</a></li>
+    <li><strong>操作結果のメッセージが表示されない。</strong>
+      ビューは <code>messages.success()</code> などを呼んでいますが、表示するテンプレートがありません。→ <a href="#step1-1">STEP 1-1</a></li>
+  </ol>
+
+  <h3>画面別の機能一覧</h3>
+  <div class="table-scroll">
+  <table>
+    <tr><th>画面</th><th>画面上の機能</th><th>状態</th><th>内容</th><th>手順</th></tr>
+
+    <tr><td rowspan="7">共通<br>(base.html)</td>
+      <td>時計・ハンバーガーメニュー</td><td><span class="badge ok">実装済</span></td><td>app.js</td><td>-</td></tr>
+    <tr><td>未対応バッジ(上部・サイド)</td><td><span class="badge ok">実装済</span></td><td>context processor + 5秒ポーリング</td><td>-</td></tr>
+    <tr><td>新規異常のトースト・通知音・OS通知</td><td><span class="badge warn">要修正</span></td><td>動作するが通知のURL・アイコンが直書き</td><td><a href="#step1-4">1-4</a></td></tr>
+    <tr><td>🚨 異常検知バナー</td><td><span class="badge ok">実装済</span></td><td>ページ読み込み時に最新の未対応1件を表示</td><td>-</td></tr>
+    <tr><td>操作結果メッセージ</td><td><span class="badge ng">未実装</span></td><td>表示領域が無い</td><td><a href="#step1-1">1-1</a></td></tr>
+    <tr><td>「AI監視 ● 稼働中」</td><td><span class="badge warn">要修正</span></td><td>固定文字。AIを停止しても「稼働中」のまま</td><td><a href="#step1-2">1-2</a></td></tr>
+    <tr><td>カメラデバッグのメニュー(管理者のみ表示)</td><td><span class="badge opt">任意</span></td><td>メニューは隠れるがURL直打ちは誰でも可</td><td><a href="#step7-1">7-1</a></td></tr>
+
+    <tr><td>ログイン/ログアウト</td>
+      <td>ログイン・ログアウト</td><td><span class="badge warn">要修正</span></td><td>遷移先が <code>/dev/var6/</code> 固定</td><td><a href="#step1-3">1-3</a></td></tr>
+
+    <tr><td rowspan="3">ダッシュボード</td>
+      <td>サマリカード8枚・直近の異常・7日グラフ・直近の録画</td><td><span class="badge ok">実装済</span></td><td>views.dashboard</td><td>-</td></tr>
+    <tr><td>「対応済み」「誤検知」カードの色</td><td><span class="badge warn">要修正</span></td><td>CSSクラスが未定義</td><td><a href="#step2">2</a></td></tr>
+    <tr><td>カメラ状態(online/offline)</td><td><span class="badge warn">要修正</span></td><td>管理画面で手入力した値。実機の状態と連動しない</td><td><a href="#step2">2</a></td></tr>
+
+    <tr><td rowspan="5">異常検知<br>一覧・詳細</td>
+      <td>状況チップ・種類/対応者/日付の絞り込み</td><td><span class="badge ok">実装済</span></td><td>views.alert_list</td><td>-</td></tr>
+    <tr><td>対応する / 解決・報告を入力 / 誤検知として報告</td><td><span class="badge ok">実装済</span></td><td>同時押し対策のみ追加を推奨</td><td><a href="#step3">3</a></td></tr>
+    <tr><td>検知時の実画像サムネイル・▶マーク</td><td><span class="badge ng">未実装</span></td><td><code>has_real_thumbnail</code> / <code>display_thumbnail_url</code> がモデルに無い</td><td><a href="#step3">3</a></td></tr>
+    <tr><td>対応者のリアルタイム共有</td><td><span class="badge ok">実装済</span></td><td>ポーリングで表示を書き換え</td><td>-</td></tr>
+    <tr><td>種類「立ち入り禁止ゾーン」</td><td><span class="badge ng">未実装</span></td><td>選択肢はあるが実検知が無い(デモデータのみ)</td><td><a href="#step8-5">8-5</a></td></tr>
+
+    <tr><td rowspan="2">プロフィール/報告</td>
+      <td>解決報告の入力・報告履歴</td><td><span class="badge ok">実装済</span></td><td>views.profile / report_create</td><td>-</td></tr>
+    <tr><td>所属施設・役割</td><td><span class="badge warn">要修正</span></td><td>ビュー内に固定文字</td><td><a href="#step4">4</a></td></tr>
+
+    <tr><td rowspan="4">設定</td>
+      <td>通知設定トグル</td><td><span class="badge ok">実装済</span></td><td>localStorage に保存</td><td>-</td></tr>
+    <tr><td>AI検知設定(閲覧)</td><td><span class="badge ok">実装済</span></td><td>AISettings を表示</td><td>-</td></tr>
+    <tr><td>AI自動検知のON/OFF・手動で異常発生</td><td><span class="badge warn">要修正</span></td><td>動作するがシミュレーターが設定値の一部を無視</td><td><a href="#step5">5</a></td></tr>
+    <tr><td>全データ削除</td><td><span class="badge warn">要修正</span></td><td>DBのみ削除。録画ファイルが残る(STEP 8 以降)</td><td><a href="#step5">5</a></td></tr>
+
+    <tr><td rowspan="2">録画一覧・再生</td>
+      <td>一覧・種類フィルタ・再生・検知マークへジャンプ・ダウンロード</td><td><span class="badge ok">実装済</span></td><td>画面と再生処理は動く</td><td>-</td></tr>
+    <tr><td>録画の実体</td><td><span class="badge ng">未実装</span></td><td>外部サンプル動画のURL。実録画の保存・配信が無い</td><td><a href="#step6">6</a> / <a href="#step8-2">8-2</a></td></tr>
+
+    <tr><td rowspan="5">カメラデバッグ</td>
+      <td>ページ表示</td><td><span class="badge ng">未実装</span></td><td>URL未定義でエラー</td><td><a href="#step7-1">7-1</a></td></tr>
+    <tr><td>デバイス一覧・再検知・ライブ表示</td><td><span class="badge warn">要修正</span></td><td>処理はあるが解像度の幅と高さが逆</td><td><a href="#step7-2">7-2</a></td></tr>
+    <tr><td>検知の進行バー</td><td><span class="badge ng">未実装</span></td><td>API・JS・CSS が無い</td><td><a href="#step7-2">7-2</a></td></tr>
+    <tr><td>リアルタイムAI解析カード(状態/判定/危険度/足の位置/無動作/fps/自動録画)</td><td><span class="badge ng">未実装</span></td><td>解析エンジン・状態API・JS・CSS が無い</td><td><a href="#step8">8</a></td></tr>
+    <tr><td>全カメラの稼働状況表・自動再学習の表示</td><td><span class="badge ng">未実装</span></td><td>同上</td><td><a href="#step8">8</a></td></tr>
+  </table>
+  </div>
+
+  <h3>作業の流れ</h3>
+  <div class="flow">
+    <span>STEP 0 環境</span><i>→</i><span>STEP 1〜6 既存画面の修正</span><i>→</i>
+    <span>STEP 7 カメラデバッグを開けるように</span><i>→</i><span>STEP 8 実AI</span><i>→</i><span>STEP 9 検証</span>
+  </div>
+  <p>STEP 1〜7 は半日〜1日程度の小さな修正です。STEP 8 が本体で、学習データの確認と実カメラでの調整に時間がかかります。</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="step0">
+  <h2>STEP 0. 環境構築と起動</h2>
+  <p>README の起動手順は別マシンのパス(<code>C:\Users\student\code\ai2</code>)になっているため、このリポジトリ用に読み替えます。</p>
+
+  <figure class="code"><figcaption><span class="path">PowerShell</span><span class="kind">初回セットアップ</span></figcaption>
+<pre><code><span class="c"># 1) 最新を取得</span>
+git pull
+
+<span class="c"># 2) 仮想環境を作って有効化(Python 3.13)</span>
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+
+<span class="c"># 3) 依存パッケージを導入(Windows は requirements-windows.txt を使う)</span>
+<span class="c">#    tensorflow / mediapipe を含むため数分かかります</span>
+pip install -r requirements-windows.txt
+
+<span class="c"># 4) DBを最新のテーブル定義に合わせる(db.sqlite3 は同梱済み)</span>
+python manage.py migrate
+
+<span class="c"># 5) デモデータが空の場合だけ投入(カメラ4台・利用者6名・異常8件など)</span>
+python manage.py seed_demo
+
+<span class="c"># 6) 起動 → ブラウザで http://127.0.0.1:8000/ を開く</span>
+python manage.py runserver 127.0.0.1:8000</code></pre></figure>
+
+  <p>ログインは README 記載のデモアカウント(<code>staff1</code> など)を使います。</p>
+
+  <h3>settings.py に追加する設定(以降の STEP で使用)</h3>
+  <p>先にまとめて追加しておくと、後の手順がそのまま動きます。既存の <code>AI_MONITOR_ENABLED</code> はどこからも参照されていないため削除して構いません。</p>
+
+  <figure class="code"><figcaption><span class="path">config/settings.py</span><span class="kind">末尾に追記</span></figcaption>
+<pre data-lang="python" data-check><code><span class="c"># ===== メディアファイル(録画mp4・サムネイルの保存先) =====</span>
+<span class="c"># 先頭に / を付けない相対指定にすると、サブパス配信時に自動で接頭辞が付く</span>
+MEDIA_ROOT = BASE_DIR / "media"
+MEDIA_URL = "media/"
+
+<span class="c"># ===== 画面表示用 =====</span>
+FACILITY_NAME = "さくら介護施設"   <span class="c"># プロフィール画面の「所属施設」</span>
+
+<span class="c"># ===== AI関連 =====</span>
+AI_SIMULATOR_ENABLED = True    <span class="c"># デモ用シミュレーター(乱数で異常を作る)を動かすか</span>
+AI_REALTIME_ENABLED = False    <span class="c"># 実カメラのAI解析を使うか(STEP 8 が終わったら True)</span>
+AI_ALWAYS_ON = True            <span class="c"># 画面を開いていなくても全カメラを解析し続けるか</span>
+AI_MODEL_DIR = BASE_DIR / "ai_models"            <span class="c"># 学習済みモデルの置き場所</span>
+AI_TRAIN_DATA_DIR = BASE_DIR / "train_data"      <span class="c"># 姿勢CSV(学習材料)</span>
+AI_TRAIN_DATASET_DIR = BASE_DIR / "train_dataset"  <span class="c"># 状態モデル用の .npy</span>
+AI_ANALYSIS_FPS = 10           <span class="c"># 1秒あたりの解析回数(上限)</span>
+AI_JPEG_QUALITY = 75           <span class="c"># 配信するJPEGの画質(1〜100)</span>
+AI_RECORDING_SECONDS = 8       <span class="c"># 検知した時点から何秒録画するか</span>
+AI_ALERT_CAMERA_ID = None      <span class="c"># 異常を紐づけるカメラ台帳のID(None=オンラインの先頭)</span></code></pre></figure>
+
+  <div class="note">
+    <strong>推奨: .gitignore の追加</strong>
+    現在 <code>__pycache__/</code>・<code>db.sqlite3-shm</code>・<code>db.sqlite3-wal</code> がコミットされています。
+    <code>.gitignore</code> に <code>__pycache__/</code>、<code>*.pyc</code>、<code>db.sqlite3-shm</code>、<code>db.sqlite3-wal</code>、
+    <code>media/</code>、<code>.venv/</code> を入れておくと、起動するたびに差分が出る状態を避けられます。
+  </div>
+  <label class="step-check"><input type="checkbox" data-key="s0"> <span>STEP 0 完了: ログイン画面が表示される</span></label>
+</section>
+
+<!-- ============================================================ -->
+<section id="step1">
+  <h2>STEP 1. 共通レイアウト(base.html)</h2>
+
+  <h3 id="step1-1">1-1 操作結果メッセージを表示する <span class="badge ng">未実装</span></h3>
+  <p>
+    「対応を担当しました」「解決報告を保存しました」「AI監視を停止しました」などは
+    ビューが Django の messages に入れていますが、画面に出す場所がありません。
+    <code>base.html</code> の MAIN 冒頭に表示領域を追加します。
+  </p>
+
+  <figure class="code"><figcaption><span class="path">templates/base.html</span><span class="kind">&lt;main class="main"&gt; の直後に追加</span></figcaption>
+<pre><code>{# ビューが messages.success() 等で積んだメッセージを1回だけ表示する #}
+{% if messages %}
+  &lt;div class="flash-list"&gt;
+    {% for message in messages %}
+      {# message.tags は success / warning / info / error のいずれか → 色分けに使う #}
+      &lt;div class="flash flash--{{ message.tags }}" role="status"&gt;{{ message }}&lt;/div&gt;
+    {% endfor %}
+  &lt;/div&gt;
+{% endif %}</code></pre></figure>
+
+  <figure class="code"><figcaption><span class="path">static/css/style.css</span><span class="kind">末尾に追記</span></figcaption>
+<pre><code><span class="c">/* ---------- 操作結果メッセージ ---------- */</span>
+.flash-list { display: grid; gap: 8px; margin-bottom: 16px; }
+.flash {
+  padding: 10px 14px;
+  border: 1px solid var(--color-border);
+  border-left: 5px solid var(--color-primary);   <span class="c">/* 既定(info)は青 */</span>
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+.flash--success { border-left-color: var(--color-success); }  <span class="c">/* 成功 = 緑 */</span>
+.flash--warning { border-left-color: var(--color-warn); }     <span class="c">/* 注意 = 橙 */</span>
+.flash--error   { border-left-color: var(--color-danger); }   <span class="c">/* 失敗 = 赤 */</span></code></pre></figure>
+
+  <h3 id="step1-2">1-2 「AI監視 稼働中」を実際の状態に連動させる <span class="badge warn">要修正</span></h3>
+  <p>サイドバー下部の表示は固定文字です。設定画面でAIを停止しても変わらないため、<code>AISettings.enabled</code> を渡して切り替えます。</p>
+
+  <figure class="code"><figcaption><span class="path">core/context_processors.py</span><span class="kind">置き換え</span></figcaption>
+<pre data-lang="python" data-check><code>"""全ページ共通コンテキスト(情報バーの未対応バッジ等)"""
+from .models import AISettings, Alert
+
+
+def alert_globals(request):
+    <span class="c"># 未ログイン(ログイン画面など)では何も渡さない</span>
+    if not request.user.is_authenticated:
+        return {}
+    open_alerts = Alert.objects.filter(status=Alert.Status.OPEN)
+    return {
+        "open_alert_count": open_alerts.count(),
+        "latest_open_alert": open_alerts.order_by("-occurred_at").first(),
+        <span class="c"># サイドバーの「AI監視 稼働中/停止中」表示に使う</span>
+        "ai_monitor_enabled": AISettings.load().enabled,
+    }</code></pre></figure>
+
+  <figure class="code"><figcaption><span class="path">templates/base.html</span><span class="kind">sidebar__footer を置き換え</span></figcaption>
+<pre><code>&lt;div class="sidebar__footer"&gt;
+  {# id を付けておき、ポーリング結果でも書き換えられるようにする #}
+  AI監視
+  &lt;span id="ai-monitor-dot"
+        class="status-dot {% if ai_monitor_enabled %}status-dot--on{% else %}status-dot--off{% endif %}"&gt;&lt;/span&gt;
+  &lt;span id="ai-monitor-label"&gt;{% if ai_monitor_enabled %}稼働中{% else %}停止中{% endif %}&lt;/span&gt;
+&lt;/div&gt;</code></pre></figure>
+
+  <p>他のスタッフが停止した場合も反映されるよう、既存のポーリングAPIに1項目足します。</p>
+
+  <figure class="code"><figcaption><span class="path">core/views.py</span><span class="kind">api_alerts の戻り値に1行追加</span></figcaption>
+<pre data-lang="python" data-check><code>@login_required
+def api_alerts(request):
+    """異常検知ポーリング用JSON(static/js/app.js が5秒間隔で呼ぶ)"""
+    unresolved = Alert.objects.exclude(status=Alert.Status.RESOLVED).select_related("camera", "responder")[:50]
+    return JsonResponse({
+        "open_count": Alert.objects.filter(status=Alert.Status.OPEN).count(),
+        <span class="c"># 追加: AI監視のON/OFF(サイドバー表示の更新用)</span>
+        "ai_enabled": AISettings.load().enabled,
+        "alerts": [
+            {
+                "id": alert.id,
+                "kind_label": alert.kind_label,
+                "status": alert.status,
+                "status_label": alert.status_label,
+                "responder_name": (
+                    alert.responder.get_full_name() or alert.responder.username
+                ) if alert.responder else None,
+                "location": alert.location,
+            }
+            for alert in unresolved
+        ],
+    })</code></pre></figure>
+
+  <figure class="code"><figcaption><span class="path">static/js/app.js</span><span class="kind">applyAlertData() の先頭付近に追加</span></figcaption>
+<pre><code><span class="c">// AI監視の稼働表示を、サーバーから届いた最新の状態に合わせる</span>
+var aiDot = document.getElementById('ai-monitor-dot');
+var aiLabel = document.getElementById('ai-monitor-label');
+if (aiDot &amp;&amp; aiLabel &amp;&amp; typeof data.ai_enabled === 'boolean') {
+  <span class="c">// 緑の点(on) と 灰色の点(off) を切り替える</span>
+  aiDot.className = 'status-dot ' + (data.ai_enabled ? 'status-dot--on' : 'status-dot--off');
+  aiLabel.textContent = data.ai_enabled ? '稼働中' : '停止中';
+}</code></pre></figure>
+
+  <h3 id="step1-3">1-3 ログイン後の遷移先を直す <span class="badge warn">要修正</span></h3>
+  <p>
+    <code>login.html</code> の <code>next</code> が <code>/dev/var6/</code> に固定されています。
+    公開サーバーをそのパス配下で動かすための対応と思われますが、テンプレートに直書きするとローカルで動きません。
+    テンプレートは標準の <code>{{ next }}</code> に戻し、サブパスは設定で吸収します。
+  </p>
+
+  <figure class="code"><figcaption><span class="path">templates/accounts/login.html</span><span class="kind">hidden の next を置き換え</span></figcaption>
+<pre><code>{# next: ログイン前に開こうとしていたURL。空ならLOGIN_REDIRECT_URL(ダッシュボード)へ進む #}
+&lt;input type="hidden" name="next" value="{{ next }}"&gt;</code></pre></figure>
+
+  <figure class="code"><figcaption><span class="path">config/settings.py</span><span class="kind">認証まわりを置き換え</span></figcaption>
+<pre data-lang="python" data-check><code>import os
+
+<span class="c"># サブパス配信用の接頭辞。例: 環境変数 CARESEC_SCRIPT_NAME=/dev/var6</span>
+<span class="c"># 未設定(ローカル)なら None になり、これまで通り / 直下で動く</span>
+FORCE_SCRIPT_NAME = os.environ.get("CARESEC_SCRIPT_NAME") or None
+
+<span class="c"># パス文字列ではなく「URL名」で指定する。</span>
+<span class="c"># こうすると FORCE_SCRIPT_NAME の接頭辞が自動で付く</span>
+LOGIN_URL = "login"
+LOGIN_REDIRECT_URL = "dashboard"
+LOGOUT_REDIRECT_URL = "login"</code></pre></figure>
+
+  <div class="note">
+    <strong>補足</strong>
+    <code>STATIC_URL = "static/"</code> は既に相対指定なので、<code>FORCE_SCRIPT_NAME</code> を設定すれば静的ファイルのURLにも接頭辞が付きます。
+    また <code>ALLOWED_HOSTS</code> に<strong>先頭に空白が入った値</strong>が1つあります。そのホスト名では一致しないので、空白を削除してください。
+  </div>
+
+  <h3 id="step1-4">1-4 通知のURL直書きをなくす <span class="badge warn">要修正</span></h3>
+  <p><code>app.js</code> の OS通知が <code>/static/img/thumb_fall.svg</code> と <code>/alerts/</code> を直書きしています。1-3 でサブパス配信にすると壊れるため、テンプレートから渡します。</p>
+
+  <figure class="code"><figcaption><span class="path">templates/base.html</span><span class="kind">&lt;body&gt; タグを置き換え</span></figcaption>
+<pre><code>{# JSが使うURLは data-* 属性で渡す(JS側にパスを直書きしない) #}
+&lt;body data-alerts-api="{{ api_alerts_url|default:'' }}"
+      data-alert-list-url="{% url 'alert_list' %}"
+      data-notify-icon="{% static 'img/thumb_fall.svg' %}"&gt;</code></pre></figure>
+
+  <figure class="code"><figcaption><span class="path">static/js/app.js</span><span class="kind">sendOSNotification の呼び出し部分を置き換え</span></figcaption>
+<pre><code><span class="c">// OS通知(タブがバックグラウンドの時のみ)</span>
+sendOSNotification('CARE SEC - 異常検知', {
+  body: a.kind_label + ' / ' + (a.location || ''),
+  icon: document.body.dataset.notifyIcon,           <span class="c">// テンプレートから受け取ったアイコンURL</span>
+  tag: 'alert-' + a.id,                             <span class="c">// 同じ異常の通知を重複させない</span>
+  data: { url: document.body.dataset.alertListUrl } <span class="c">// クリック時に開く異常検知一覧</span>
+});</code></pre></figure>
+
+  <p>同じ理由で、<code>core/ai_simulator.py</code> 内の <code>"/static/img/thumb_fall.svg"</code> も <code>settings.STATIC_URL + "img/thumb_fall.svg"</code> に変えておきます(<code>views.settings</code> の手動検知も同様)。</p>
+  <label class="step-check"><input type="checkbox" data-key="s1"> <span>STEP 1 完了: 「対応する」を押すと緑のメッセージが出る / ログイン後ダッシュボードに着く</span></label>
+</section>
+
+<!-- ============================================================ -->
+<section id="step2">
+  <h2>STEP 2. ダッシュボード</h2>
+  <p>集計・表・グラフは実装済みです。残りは見た目と「カメラ状態」の実データ化です。</p>
+
+  <h3>2-1 未定義のCSSクラスを追加 <span class="badge warn">要修正</span></h3>
+  <p>テンプレートで使っているのに <code>style.css</code> に定義が無いクラスをまとめて追加します(他の画面の分も含みます)。</p>
+
+  <figure class="code"><figcaption><span class="path">static/css/style.css</span><span class="kind">末尾に追記</span></figcaption>
+<pre><code><span class="c">/* ---------- ダッシュボード: サマリカードの色 ---------- */</span>
+.stat-card--resolved { border-top: 4px solid var(--color-success); }  <span class="c">/* 対応済み = 緑 */</span>
+.stat-card--fp       { border-top: 4px solid var(--color-muted); }    <span class="c">/* 誤検知 = 灰 */</span>
+
+<span class="c">/* ---------- 異常検知一覧: サムネイル上の再生マーク ---------- */</span>
+.alert-card__thumb { position: relative; }   <span class="c">/* ▶を重ねるための基準 */</span>
+.alert-card__thumb-play {
+  position: absolute; right: 6px; bottom: 6px;
+  padding: 0 6px; border-radius: 3px;
+  background: rgba(0, 0, 0, .6); color: #fff; font-size: 12px;
+}
+
+<span class="c">/* ---------- 設定画面: デモ用カード・危険操作カード ---------- */</span>
+.demo-card   { border-left: 4px solid var(--color-primary); }
+.danger-card { border-left: 4px solid var(--color-danger); }
+
+<span class="c">/* ---------- 種類チップ: 立ち入り禁止ゾーン ---------- */</span>
+.chip--zone { background: #ece4f5; color: #5a2d82; }
+
+<span class="c">/* ---------- カードの小見出し ---------- */</span>
+.card__header--sub { margin-top: 16px; }</code></pre></figure>
+
+  <h3>2-2 カメラ状態を実機と連動させる <span class="badge warn">要修正</span></h3>
+  <p>
+    <code>Camera.is_online</code> は管理画面で手入力する値です。STEP 8 の解析エンジンが動き始めたら、
+    「最後に映像が取れた時刻」を記録して、一定時間途絶えたら offline と判定する形にします。
+  </p>
+
+  <figure class="code"><figcaption><span class="path">core/models.py</span><span class="kind">Camera に追加 → makemigrations / migrate</span></figcaption>
+<pre data-lang="python" data-check><code>class Camera(models.Model):
+    <span class="c"># ...既存フィールド(name / location / stream_url / is_online)はそのまま...</span>
+
+    <span class="c"># 解析エンジンが最後に映像を受け取った時刻(まだ一度も無ければ None)</span>
+    last_seen_at = models.DateTimeField("最終映像受信", null=True, blank=True)
+
+    @property
+    def is_alive(self):
+        """直近60秒以内に映像が届いていれば「実際に動いている」とみなす"""
+        if self.last_seen_at is None:
+            return False
+        return (timezone.now() - self.last_seen_at).total_seconds() &lt; 60</code></pre></figure>
+
+  <p>
+    エンジン側では 10秒に1回程度 <code>Camera.objects.filter(id=...).update(last_seen_at=timezone.now())</code> を呼びます
+    (STEP 8-2 のループ内「AI設定の再読込」と同じ場所に置くのが簡単です)。
+    テンプレートは <code>camera.is_online</code> を <code>camera.is_alive</code> に替えるだけです。
+    シミュレーターだけで運用している間は、この手順は後回しで構いません。
+  </p>
+  <label class="step-check"><input type="checkbox" data-key="s2"> <span>STEP 2 完了: 「対応済み」「誤検知」カードに色が付く</span></label>
+</section>
+
+<!-- ============================================================ -->
+<section id="step3">
+  <h2>STEP 3. 異常検知(一覧・詳細)</h2>
+
+  <h3>3-1 検知時の実画像サムネイル <span class="badge ng">未実装</span></h3>
+  <p>
+    <code>alerts/list.html</code> と <code>alerts/detail.html</code> は <code>alert.has_real_thumbnail</code> と
+    <code>alert.display_thumbnail_url</code> を参照していますが、モデルに存在しません。
+    現状は常にイラスト(SVG)側の分岐に落ちています。プロパティを追加します。
+  </p>
+
+  <figure class="code"><figcaption><span class="path">core/models.py</span><span class="kind">Alert クラスに追加</span></figcaption>
+<pre data-lang="python" data-check><code>def _is_real_image(url):
+    """ダミーのイラスト(thumb_*.svg)ではなく、実際に撮影した画像のURLかどうか"""
+    return bool(url) and not url.lower().endswith(".svg")
+
+
+class Alert(models.Model):
+    <span class="c"># ...既存のフィールド・プロパティはそのまま...</span>
+
+    @property
+    def display_thumbnail_url(self):
+        """一覧・詳細に出す実画像のURL(無ければ空文字)
+
+        優先順位: 1) 自動録画のサムネイル  2) 異常レコード自身のサムネイル
+        """
+        <span class="c"># 録画が無い異常では例外になるため getattr で安全に取り出す</span>
+        recording = getattr(self, "recording", None)
+        if recording is not None and _is_real_image(recording.thumbnail_url):
+            return recording.thumbnail_url
+        if _is_real_image(self.thumbnail_url):
+            return self.thumbnail_url
+        return ""
+
+    @property
+    def has_real_thumbnail(self):
+        """実画像があるか(テンプレートの分岐用)"""
+        return bool(self.display_thumbnail_url)</code></pre></figure>
+
+  <p>一覧では異常1件ごとに録画を引きにいくため、ビュー側で一括取得しておきます。</p>
+
+  <figure class="code"><figcaption><span class="path">core/views.py</span><span class="kind">alert_list 内の1行を変更</span></figcaption>
+<pre data-lang="python" data-check><code><span class="c"># 変更前: Alert.objects.select_related("camera", "responder")</span>
+<span class="c"># "recording" を加えると、録画も1回のSQLでまとめて取得できる(件数分の追加SQLを防ぐ)</span>
+alerts = Alert.objects.select_related("camera", "responder", "recording")</code></pre></figure>
+
+  <h3>3-2 「対応する」の同時押し対策 <span class="badge opt">任意</span></h3>
+  <p>
+    現在は「読み込み → 状態を確認 → 保存」の順なので、2人がほぼ同時に押すと後から押した人で上書きされる余地があります。
+    「未対応のものだけを更新する」という1回のSQLにすると、先に押した1人だけが対応者になります。
+  </p>
+
+  <figure class="code"><figcaption><span class="path">core/views.py</span><span class="kind">alert_respond を置き換え</span></figcaption>
+<pre data-lang="python" data-check><code>@login_required
+@require_POST
+def alert_respond(request, alert_id):
+    """「対応する」: 自分が対応者になる(全アクセス者に共有される)"""
+    alert = get_object_or_404(Alert, id=alert_id)
+
+    <span class="c"># 「まだ未対応なら」という条件付きで更新する。</span>
+    <span class="c"># 戻り値は更新できた行数。同時に押された場合、先の1人だけが 1 になる</span>
+    updated = Alert.objects.filter(id=alert_id, status=Alert.Status.OPEN).update(
+        responder=request.user,
+        status=Alert.Status.RESPONDING,
+        responded_at=timezone.now(),
+    )
+    if updated:
+        messages.success(request, f"「{alert.kind_label}」の対応を担当しました。")
+    else:
+        messages.warning(request, "この異常はすでに対応中です。")
+    return redirect("alert_list")</code></pre></figure>
+
+  <h3>3-3 新着の異常を一覧に反映 <span class="badge opt">任意</span></h3>
+  <p>ポーリングは既存カードの書き換えとトーストのみで、新しいカードは再読み込みするまで増えません。一覧を開いている時だけ自動で読み込み直します。</p>
+
+  <figure class="code"><figcaption><span class="path">static/js/app.js</span><span class="kind">「新規の未対応異常 → 通知」ブロックの末尾に追加</span></figcaption>
+<pre><code><span class="c">// 異常検知一覧を開いていて、まだカードが無い新着なら一覧を読み込み直す</span>
+var listEl = document.querySelector('.alert-list');
+var hasCard = document.getElementById('alert-' + a.id);
+if (listEl &amp;&amp; !hasCard) {
+  <span class="c">// トーストと通知音が出てから切り替わるよう、少し待ってから再読み込み</span>
+  setTimeout(function () { window.location.reload(); }, 1500);
+}</code></pre></figure>
+  <label class="step-check"><input type="checkbox" data-key="s3"> <span>STEP 3 完了: 一覧・詳細がエラーなく表示され、「対応する」が動く</span></label>
+</section>
+
+<!-- ============================================================ -->
+<section id="step4">
+  <h2>STEP 4. プロフィール/解決報告</h2>
+  <p>報告フォーム・履歴は実装済みです。固定文字になっている所属施設だけ設定値に移します。</p>
+
+  <figure class="code"><figcaption><span class="path">core/views.py</span><span class="kind">profile の "profile" 部分を変更</span></figcaption>
+<pre data-lang="python" data-check><code><span class="c"># views.py には settings という名前のビュー関数があるため、</span>
+<span class="c"># Djangoの設定は別名(dj_settings)で読み込む(同名だと関数の方を指してしまう)</span>
+from django.conf import settings as dj_settings
+
+profile_context = {
+    <span class="c"># 管理画面を使える人は「管理者」、それ以外は「介護スタッフ」と表示</span>
+    "role": "管理者" if request.user.is_admin else "介護スタッフ",
+    <span class="c"># 施設名は settings.py の FACILITY_NAME から取得</span>
+    "facility": getattr(dj_settings, "FACILITY_NAME", "-"),
+    "resolved_count": my_reports.count(),
+}</code></pre></figure>
+  <p><code>render()</code> に渡している辞書の <code>"profile": {...}</code> を <code>"profile": profile_context</code> に置き換えてください。</p>
+  <label class="step-check"><input type="checkbox" data-key="s4"> <span>STEP 4 完了</span></label>
+</section>
+
+<!-- ============================================================ -->
+<section id="step5">
+  <h2>STEP 5. 設定画面</h2>
+
+  <h3>5-1 シミュレーターを設定に従わせる <span class="badge warn">要修正</span></h3>
+  <ul>
+    <li><code>core/apps.py</code> が無条件にシミュレーターを起動しています(<code>migrate</code> などの管理コマンド実行時にも動きます)。→ <a href="#step8-3">STEP 8-3</a> で起動条件を整理します。</li>
+    <li>シミュレーターのクールダウンが 300秒固定で、画面に表示している「アラートクールダウン」の値を使っていません。</li>
+  </ul>
+
+  <figure class="code"><figcaption><span class="path">core/ai_simulator.py</span><span class="kind">_create_alert のクールダウン判定を変更</span></figcaption>
+<pre data-lang="python" data-check><code>def cooldown_active(camera):
+    """同じカメラで、クールダウン時間内に既に異常が出ているか"""
+    from core.models import AISettings, Alert
+
+    <span class="c"># 固定の300秒ではなく、設定画面に表示している値を使う</span>
+    seconds = AISettings.load().cooldown_seconds
+    return Alert.objects.filter(
+        camera=camera,
+        created_at__gte=timezone.now() - timedelta(seconds=seconds),
+    ).exists()</code></pre></figure>
+  <p><code>_create_alert()</code> 冒頭の <code>recent = ...</code> 〜 <code>if recent: return</code> を <code>if cooldown_active(camera): return</code> に置き換えます。</p>
+
+  <h3>5-2 全データ削除で録画ファイルも消す <span class="badge warn">要修正</span></h3>
+  <p>STEP 8 で実録画を保存するようになると、DBだけ消してもmp4が残ります。</p>
+
+  <figure class="code"><figcaption><span class="path">core/views.py</span><span class="kind">settings() の clear_all_data に追加</span></figcaption>
+<pre data-lang="python" data-check><code>import shutil
+from pathlib import Path
+
+
+def remove_recording_files():
+    """media/recordings/ 配下の録画mp4とサムネイルをまとめて削除する"""
+    folder = Path(dj_settings.MEDIA_ROOT) / "recordings"
+    <span class="c"># フォルダが無くてもエラーにしない(まだ1件も録画していない場合)</span>
+    shutil.rmtree(folder, ignore_errors=True)</code></pre></figure>
+  <p><code>PersonDetection.objects.all().delete()</code> の次の行で <code>remove_recording_files()</code> を呼びます。</p>
+  <label class="step-check"><input type="checkbox" data-key="s5"> <span>STEP 5 完了</span></label>
+</section>
+
+<!-- ============================================================ -->
+<section id="step6">
+  <h2>STEP 6. 録画一覧・再生</h2>
+  <p>
+    画面・再生・検知マークジャンプは動いています。足りないのは「実際の録画ファイルを置く場所と配信」です
+    (録画ファイルを作る処理は STEP 8-2)。STEP 0 で <code>MEDIA_ROOT</code> / <code>MEDIA_URL</code> を追加済みなので、配信の設定だけ行います。
+  </p>
+
+  <figure class="code"><figcaption><span class="path">config/urls.py</span><span class="kind">末尾に追記</span></figcaption>
+<pre data-lang="python" data-check><code>from django.conf import settings
+from django.conf.urls.static import static
+
+<span class="c"># 開発時(DEBUG=True)だけ、Django自身が media/ 配下のファイルを配信する。</span>
+<span class="c"># 本番は Nginx や S3 から配信するため、この行は効かない(DEBUG=False では空のリストを返す)</span>
+urlpatterns += static("media/", document_root=settings.MEDIA_ROOT)</code></pre></figure>
+
+  <div class="note">
+    <strong>録画レコードに入れる値</strong>
+    <code>Recording.video_url</code> と <code>thumbnail_url</code> には
+    <code>settings.MEDIA_URL + "recordings/ファイル名"</code> を保存します。
+    画面側(<code>&lt;video&gt;</code>・ダウンロードリンク・サムネイル)は URL を出力しているだけなので、テンプレートの変更は不要です。
+    なお「動画をダウンロード」は同一オリジンのURLでのみ保存ダイアログになります(現在の外部サンプル動画では再生画面が開くだけです)。
+  </div>
+  <label class="step-check"><input type="checkbox" data-key="s6"> <span>STEP 6 完了</span></label>
+</section>
+
+<!-- ============================================================ -->
+<section id="step7">
+  <h2>STEP 7. カメラデバッグ画面を開けるようにする</h2>
+  <p>この STEP が終わると、AI無しの状態で「デバイス検知(進行バー付き)→ 選択 → ライブ表示」が動きます。AIカードは STEP 8 まで非表示です。</p>
+
+  <h3 id="step7-1">7-1 足りないURLとビューを追加 <span class="badge ng">未実装</span></h3>
+
+  <figure class="code"><figcaption><span class="path">config/urls.py</span><span class="kind">カメラデバッグの3行の下に追加</span></figcaption>
+<pre data-lang="python" data-check><code>extra_debug_urls = [
+    <span class="c"># デバイス検知の進み具合を返す(進行バー用)</span>
+    path("debug/camera/progress/", views.debug_camera_detect_progress, name="debug_camera_detect_progress"),
+    <span class="c"># リアルタイムAIの現在の状態を返す(AIカード用)</span>
+    path("debug/camera/ai/", views.debug_camera_ai_status, name="debug_camera_ai_status"),
+]</code></pre></figure>
+  <p>実際には <code>urlpatterns</code> のリストに上の2行の <code>path(...)</code> をそのまま追加してください。</p>
+
+  <figure class="code"><figcaption><span class="path">core/views.py</span><span class="kind">debug_camera を置き換え + 2関数を追加</span></figcaption>
+<pre data-lang="python" data-check><code>@login_required
+def debug_camera(request):
+    """実カメラ表示のデバッグページ"""
+    return render(request, "debug/camera.html", {
+        <span class="c"># False の間はテンプレート側でAIカードごと非表示になる</span>
+        "ai_enabled": getattr(dj_settings, "AI_REALTIME_ENABLED", False),
+        <span class="c"># True なら「全カメラを常時解析しています」の説明文を出す</span>
+        "ai_always_on": getattr(dj_settings, "AI_ALWAYS_ON", False),
+        <span class="c"># JSのURLに付ける番号。毎回変わるのでブラウザの古いキャッシュが使われない</span>
+        "asset_ver": int(time.time()),
+    })
+
+
+@login_required
+def debug_camera_detect_progress(request):
+    """デバイス検知の進み具合(画面が0.4秒ごとに取りに来る)"""
+    return JsonResponse(camera_service.detect_progress())
+
+
+@login_required
+def debug_camera_ai_status(request):
+    """リアルタイムAIの状態(画面が1秒ごとに取りに来る)"""
+    <span class="c"># AIを使わない設定のときは、エンジンを読み込まずに「無効」とだけ返す</span>
+    if not getattr(dj_settings, "AI_REALTIME_ENABLED", False):
+        return JsonResponse({"enabled": False})
+
+    <span class="c"># ここで初めて読み込む(TensorFlow等が未導入でも他のページを動かすため)</span>
+    from .ai_engine import engine
+
+    device = request.GET.get("device", "")
+    <span class="c"># ?device=0 のように指定があればそのカメラ、無ければ全体の代表を返す</span>
+    return JsonResponse(engine.status(int(device) if device.isdigit() else None))</code></pre></figure>
+
+  <div class="note">
+    <strong>管理者だけに限定する場合(任意)</strong>
+    メニューは <code>user.is_admin</code> の時だけ表示されますが、URLを直接開けば誰でも見られます。
+    README では「権限機能は撤去」とされているため、限定するかどうかは方針次第です。限定する場合は各ビューの先頭に
+    <code>if not request.user.is_admin: raise PermissionDenied</code>(<code>django.core.exceptions</code>)を入れます。
+  </div>
+
+  <h3 id="step7-2">7-2 検知の進行バーと解析用フレーム取得 <span class="badge ng">未実装</span></h3>
+  <p><code>core/camera_service.py</code> に3点の変更を加えます。</p>
+
+  <h4>(a) 解像度の幅と高さが逆になっている不具合を修正</h4>
+  <figure class="code"><figcaption><span class="path">core/camera_service.py</span><span class="kind">_capture_info 内の1行</span></figcaption>
+<pre data-lang="python" data-check><code>def read_size(cap):
+    """キャプチャから (幅, 高さ) を取り出す"""
+    <span class="c"># OpenCVのプロパティ番号は 3 = 幅(WIDTH)、4 = 高さ(HEIGHT)。</span>
+    <span class="c"># 変更前は height, width = cap.get(3), cap.get(4) と逆に受けていた</span>
+    width, height = cap.get(3), cap.get(4)
+    return width, height</code></pre></figure>
+
+  <h4>(b) 進み具合の記録と取得</h4>
+  <figure class="code"><figcaption><span class="path">core/camera_service.py</span><span class="kind">追記</span></figcaption>
+<pre data-lang="python" data-check><code><span class="c"># 検知の進み具合(別のリクエストから読まれるのでロックで保護する)</span>
+_progress = {"running": False, "done": 0, "total": 0, "label": ""}
+_progress_lock = threading.Lock()
+
+
+def _set_progress(**values):
+    """進み具合を書き換える"""
+    with _progress_lock:
+        _progress.update(values)
+
+
+def detect_progress():
+    """進み具合を返す(percent は 0〜100)"""
+    with _progress_lock:
+        progress = dict(_progress)
+    total = progress["total"] or 1   <span class="c"># 0で割らないための保険</span>
+    progress["percent"] = int(progress["done"] / total * 100)
+    return progress</code></pre></figure>
+
+  <p>既存の <code>detect_devices()</code> の探索ループを、次のように進み具合を記録する形にします。</p>
+
+  <figure class="code"><figcaption><span class="path">core/camera_service.py</span><span class="kind">detect_devices() のループ部分</span></figcaption>
+<pre data-lang="python" data-check><code>def scan_all(cv2):
+    """index 0 から順にカメラを探す(1台ごとに進み具合を更新)"""
+    total = _max_devices()
+    devices = []
+    _set_progress(running=True, done=0, total=total, label="検知を開始します…")
+    try:
+        for index in range(total):
+            <span class="c"># 画面の進行バーに「いま何番を調べているか」を伝える</span>
+            _set_progress(done=index, label=f"カメラ index {index} を確認中…({index + 1}/{total})")
+
+            with _streams_lock:
+                active = _streams.get(index)
+            if active:
+                <span class="c"># 配信中のカメラは開き直せないので、覚えている情報をそのまま返す</span>
+                devices.append(dict(active["info"], in_use=True))
+                continue
+
+            info = _probe(index, cv2)
+            if info:
+                devices.append(info)
+    finally:
+        <span class="c"># 途中で失敗しても必ず「終了」にする(バーが出たままになるのを防ぐ)</span>
+        _set_progress(running=False, done=total, label="検知が完了しました")
+    return devices</code></pre></figure>
+
+  <h4>(c) AI解析用に、JPEG化する前の画像を取り出す関数</h4>
+  <figure class="code"><figcaption><span class="path">core/camera_service.py</span><span class="kind">追記</span></figcaption>
+<pre data-lang="python" data-check><code>def read_frame(index):
+    """1フレーム読み、OpenCVの画像(BGRの配列)のまま返す。失敗時は None"""
+    with _streams_lock:
+        stream = _streams.get(index)
+    if stream is None:
+        return None            <span class="c"># acquire() されていないカメラ</span>
+    with stream["lock"]:       <span class="c"># 同じカメラを同時に読まない</span>
+        ok, frame = stream["cap"].read()
+    return frame if ok else None</code></pre></figure>
+
+  <div class="note warn">
+    <strong>Windows でカメラが見つからない/60秒固まる場合</strong>
+    <code>INTEGRATION_STATUS.md</code> の実測では、既定のバックエンド(MSMF)で開くと数十秒固まるカメラがありました。
+    <code>cv2.VideoCapture(index)</code> を <code>cv2.VideoCapture(index, cv2.CAP_DSHOW)</code> に変えると改善しています
+    (<code>_probe()</code> と <code>acquire()</code> の2か所)。
+  </div>
+
+  <h3 id="step7-3">7-3 画面側のJS・CSS <span class="badge ng">未実装</span></h3>
+
+  <figure class="code"><figcaption><span class="path">static/js/debug_camera.js</span><span class="kind">変数宣言の後に追加</span></figcaption>
+<pre><code><span class="c">/* ---------- デバイス検知の進行バー ---------- */</span>
+var progressUrl = root.dataset.progressUrl;                       <span class="c">// テンプレートから渡された進捗APIのURL</span>
+var progressBox = document.getElementById("detect-progress");
+var progressBar = document.getElementById("detect-progress-bar");
+var progressLabel = document.getElementById("detect-progress-label");
+var progressPercent = document.getElementById("detect-progress-percent");
+var progressTimer = null;
+
+function startProgress() {
+  progressBox.hidden = false;
+  progressBar.style.width = "0%";
+  <span class="c">// 検知が終わるまで 0.4秒ごとに進み具合を取りに行く</span>
+  progressTimer = setInterval(function () {
+    fetch(progressUrl, { headers: { Accept: "application/json" } })
+      .then(function (res) { return res.json(); })
+      .then(function (p) {
+        progressBar.style.width = p.percent + "%";   <span class="c">// バーの長さ</span>
+        progressLabel.textContent = p.label;         <span class="c">// 例: カメラ index 1 を確認中…(2/4)</span>
+        progressPercent.textContent = p.percent + "%";
+      })
+      .catch(function () { <span class="c">/* 一時的な通信失敗は無視して次回に任せる */</span> });
+  }, 400);
+}
+
+function stopProgress() {
+  clearInterval(progressTimer);
+  progressBox.hidden = true;
+}</code></pre></figure>
+
+  <p>
+    既存の <code>loadDevices()</code> で、<code>fetch(devicesUrl ...)</code> の直前に <code>startProgress();</code> を、
+    <code>.then(function (data) {</code> の先頭と <code>.catch(function () {</code> の先頭に <code>stopProgress();</code> を入れます。
+  </p>
+
+  <figure class="code"><figcaption><span class="path">static/js/debug_camera.js</span><span class="kind">stopStream を置き換え</span></figcaption>
+<pre><code>function stopStream() {
+  streaming = false;
+  <span class="c">// src属性を消すだけでは、ブラウザが映像の受信を続けてしまうことがある。</span>
+  <span class="c">// いったん1×1の透明画像に差し替えて、サーバーとの接続を確実に切る</span>
+  imgEl.src = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
+  imgEl.removeAttribute("src");
+  imgEl.hidden = true;
+  placeholderEl.hidden = false;
+  setStreamStatus("停止中", "");
+  startBtn.disabled = !selected;
+  stopBtn.disabled = true;
+}</code></pre></figure>
+
+  <figure class="code"><figcaption><span class="path">static/css/style.css</span><span class="kind">末尾に追記</span></figcaption>
+<pre><code><span class="c">/* ---------- カメラデバッグ: 検知の進行バー ---------- */</span>
+.detect-progress { margin: 8px 0 12px; }
+.detect-progress__track {            <span class="c">/* バーの土台(灰色の溝) */</span>
+  height: 8px; border-radius: 4px; overflow: hidden;
+  background: var(--color-border);
+}
+.detect-progress__bar {              <span class="c">/* 伸びていく部分。幅はJSが % で指定する */</span>
+  height: 100%; width: 0;
+  background: var(--color-primary);
+  transition: width .3s ease;
+}
+.detect-progress__meta {
+  display: flex; justify-content: space-between;
+  margin-top: 4px; font-size: 12px; color: var(--color-muted);
+}
+
+<span class="c">/* ---------- カメラデバッグ: AIステータスカード(STEP 8 で使用) ---------- */</span>
+.ai-status-note { margin: 4px 0 12px; }
+.ai-status-grid {                    <span class="c">/* 8項目を幅に応じて自動で折り返す */</span>
+  display: grid; gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+}
+.ai-status-item {
+  padding: 8px 10px;
+  border: 1px solid var(--color-border); border-radius: var(--radius);
+}
+.ai-status-item__label { display: block; font-size: 12px; color: var(--color-muted); }
+.ai-status-item__value { font-size: 18px; font-weight: 600; }
+.ai-status-item__value.is-danger { color: var(--color-danger); }  <span class="c">/* 転倒判定時に赤くする */</span>
+.ai-devices { width: 100%; border-collapse: collapse; font-size: 14px; }
+.ai-devices th, .ai-devices td {
+  padding: 6px 8px; text-align: left;
+  border-bottom: 1px solid var(--color-border);
+}</code></pre></figure>
+  <label class="step-check"><input type="checkbox" data-key="s7"> <span>STEP 7 完了: /debug/camera/ が開き、検知 → 表示開始 → 停止ができる</span></label>
+</section>
+
+<!-- ============================================================ -->
+<section id="step8">
+  <h2>STEP 8. リアルタイムAI(転倒・状態判定)</h2>
+  <p>カメラ映像から異常を検知し、アラートと録画を作る本体です。処理の流れは次のとおりです。</p>
+  <div class="flow">
+    <span>カメラ映像</span><i>→</i><span>MediaPipe Pose<br>(33点×x,y,z = 99値)</span><i>→</i>
+    <span>直近30フレームを保持</span><i>→</i><span>転倒LSTM / 状態LSTM</span><i>→</i>
+    <span>閾値判定</span><i>→</i><span>Alert 作成 + 8秒録画</span>
+  </div>
+  <p>
+    学習材料はリポジトリに入っています。<code>train_data/</code> の CSV は1行が1フレームで、
+    <strong>99個の数値 + ラベル(fall / normal)+ 人物番号</strong>の101列です(ヘッダ行なし)。
+    <code>train_dataset/</code> には状態モデル用に加工済みのデータ(301件 × 30フレーム × 99値、8クラス:
+    立っている/座っている/しゃがんでいる/歩いている/前かがみ/横になっている/立ち上がる/転倒)があります。
+  </p>
+
+  <h3 id="step8-1">8-1 モデルの準備と学習 <span class="badge ng">未実装</span></h3>
+
+  <h4>(a) 姿勢推定モデルをダウンロード</h4>
+  <figure class="code"><figcaption><span class="path">PowerShell</span></figcaption>
+<pre><code><span class="c"># モデルの置き場所を作る</span>
+New-Item -ItemType Directory -Force ai_models
+
+<span class="c"># MediaPipe公式の姿勢推定モデル(full版)を取得</span>
+Invoke-WebRequest `
+  -Uri "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task" `
+  -OutFile "ai_models\pose_landmarker_full.task"</code></pre></figure>
+
+  <h4>(b) 学習用の共通処理</h4>
+  <figure class="code"><figcaption><span class="path">core/training.py</span><span class="kind">新規作成</span></figcaption>
+<pre data-lang="python" data-check><code>"""AIモデルの学習に使う共通処理(CSV読込 / データ作成 / モデル定義 / 学習)"""
+import shutil
+from pathlib import Path
+
+import numpy as np
+from django.conf import settings
+
+SEQ_LEN = 30      <span class="c"># 1回の判定に使うフレーム数(約3秒分)</span>
+N_FEATURES = 99   <span class="c"># 1フレームの数値の個数(33点 × x,y,z)</span>
+STRIDE = 5        <span class="c"># 何フレームずつずらして切り出すか(小さいほどデータが増える)</span>
+
+
+def model_dir():
+    """学習済みモデルの保存先(無ければ作る)"""
+    path = Path(settings.AI_MODEL_DIR)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def load_csv_features(path):
+    """姿勢CSVを読み、(フレーム数, 99) の配列で返す"""
+    import pandas as pd
+
+    <span class="c"># ヘッダ無しとして全行を読む(1行目もデータとして扱う)</span>
+    df = pd.read_csv(path, header=None)
+
+    <span class="c"># もし1行目が見出し(数値でない)だったら、その行だけ捨てる</span>
+    first_row = pd.to_numeric(df.iloc[0, :N_FEATURES], errors="coerce")
+    if first_row.isna().any():
+        df = df.iloc[1:]
+
+    <span class="c"># 先頭99列が姿勢の数値。100列目=ラベル、101列目=人物番号 は使わない</span>
+    return df.iloc[:, :N_FEATURES].astype("float32").to_numpy()
+
+
+def make_sequences(features):
+    """フレームの並びから、30フレームずつの「ひとかたまり」を切り出す"""
+    return [
+        features[start:start + SEQ_LEN]
+        for start in range(0, len(features) - SEQ_LEN + 1, STRIDE)
+    ]
+
+
+def build_fall_dataset():
+    """train_data/*.csv から 転倒(1) / 正常(0) の学習データを作る"""
+    X, y = [], []
+    for path in sorted(Path(settings.AI_TRAIN_DATA_DIR).glob("*.csv")):
+        <span class="c"># ファイル名が fall_ で始まれば転倒、normal_ なら正常</span>
+        label = 1 if path.name.startswith("fall_") else 0
+        sequences = make_sequences(load_csv_features(path))
+        X.extend(sequences)
+        y.extend([label] * len(sequences))
+    return np.asarray(X, dtype="float32"), np.asarray(y, dtype="float32")
+
+
+def build_fall_model():
+    """転倒判定モデル: 30フレームの姿勢 → 転倒している確率(0〜1)"""
+    from tensorflow import keras
+
+    model = keras.Sequential([
+        keras.layers.Input(shape=(SEQ_LEN, N_FEATURES)),
+        keras.layers.LSTM(64, return_sequences=True),   <span class="c"># 動きの時間変化を読む層</span>
+        keras.layers.Dropout(0.3),                      <span class="c"># 学習データの丸暗記を防ぐ</span>
+        keras.layers.LSTM(32),
+        keras.layers.Dense(16, activation="relu"),
+        keras.layers.Dense(1, activation="sigmoid"),    <span class="c"># 出力は確率1個</span>
+    ])
+    model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
+    return model
+
+
+def build_state_model(n_classes):
+    """状態判定モデル: 30フレームの姿勢 → 8クラス(立つ/座る/…)それぞれの確率"""
+    from tensorflow import keras
+
+    model = keras.Sequential([
+        keras.layers.Input(shape=(SEQ_LEN, N_FEATURES)),
+        keras.layers.LSTM(64),
+        keras.layers.Dropout(0.3),
+        keras.layers.Dense(32, activation="relu"),
+        keras.layers.Dense(n_classes, activation="softmax"),  <span class="c"># クラス数ぶんの確率</span>
+    ])
+    model.compile(optimizer="adam", loss="sparse_categorical_crossentropy", metrics=["accuracy"])
+    return model
+
+
+def train_fall(epochs=50, batch_size=32):
+    """転倒モデルを学習して ai_models/ に保存する。戻り値は (保存先, 検証精度)"""
+    from sklearn.model_selection import train_test_split
+
+    X, y = build_fall_dataset()
+    <span class="c"># 2割を検証用に取り分ける(転倒/正常の比率は保つ)</span>
+    X_train, X_val, y_train, y_val = train_test_split(
+        X, y, test_size=0.2, stratify=y, random_state=42,
+    )
+
+    <span class="c"># 転倒データは正常より少ないので、少ない方を重く扱って見逃しを減らす</span>
+    n_fall = float(y_train.sum())
+    n_normal = float(len(y_train) - n_fall)
+    class_weight = {0: 1.0, 1: n_normal / max(n_fall, 1.0)}
+
+    model = build_fall_model()
+    model.fit(
+        X_train, y_train,
+        validation_data=(X_val, y_val),
+        epochs=epochs, batch_size=batch_size,
+        class_weight=class_weight, verbose=2,
+    )
+    out = model_dir() / "fall_detection_lstm.keras"
+    model.save(out)
+    _, accuracy = model.evaluate(X_val, y_val, verbose=0)
+    return out, float(accuracy)
+
+
+def train_state(epochs=50, batch_size=16):
+    """状態モデルを学習して ai_models/ に保存する。戻り値は (保存先, 検証精度)"""
+    from sklearn.model_selection import train_test_split
+
+    dataset = Path(settings.AI_TRAIN_DATASET_DIR)
+    X = np.load(dataset / "state_X.npy")              <span class="c"># (301, 30, 99)</span>
+    y = np.load(dataset / "state_y.npy")              <span class="c"># (301,) クラス番号</span>
+    labels = np.load(dataset / "state_labels.npy")    <span class="c"># 番号 → 日本語ラベル</span>
+
+    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
+    model = build_state_model(len(labels))
+    model.fit(
+        X_train, y_train,
+        validation_data=(X_val, y_val),
+        epochs=epochs, batch_size=batch_size, verbose=2,
+    )
+    out = model_dir() / "state_detection_lstm.keras"
+    model.save(out)
+    <span class="c"># 出力の並び順とラベルを必ずセットで置く(ずれると表示が別の状態名になる)</span>
+    shutil.copy(dataset / "state_labels.npy", model_dir() / "state_labels.npy")
+    _, accuracy = model.evaluate(X_val, y_val, verbose=0)
+    return out, float(accuracy)</code></pre></figure>
+
+  <h4>(c) 学習コマンド</h4>
+  <figure class="code"><figcaption><span class="path">core/management/commands/ai_train.py</span><span class="kind">新規作成</span></figcaption>
+<pre data-lang="python" data-check><code>"""AIモデルの学習コマンド: python manage.py ai_train [--epochs 50]"""
+from django.core.management.base import BaseCommand
+
+from core import training
+
+
+class Command(BaseCommand):
+    help = "train_data / train_dataset から転倒モデルと状態モデルを学習する"
+
+    def add_arguments(self, parser):
+        <span class="c"># 学習の繰り返し回数。動作確認だけなら 3 程度で十分</span>
+        parser.add_argument("--epochs", type=int, default=50)
+
+    def handle(self, *args, **options):
+        path, accuracy = training.train_fall(epochs=options["epochs"])
+        self.stdout.write(self.style.SUCCESS(f"転倒モデル: {path}(検証精度 {accuracy:.1%})"))
+
+        path, accuracy = training.train_state(epochs=options["epochs"])
+        self.stdout.write(self.style.SUCCESS(f"状態モデル: {path}(検証精度 {accuracy:.1%})"))</code></pre></figure>
+
+  <figure class="code"><figcaption><span class="path">PowerShell</span></figcaption>
+<pre><code><span class="c"># まず少ない回数で最後まで通ることを確認</span>
+python manage.py ai_train --epochs 3
+
+<span class="c"># 問題なければ本番の回数で学習(ai_models/ に .keras が2つと state_labels.npy ができる)</span>
+python manage.py ai_train --epochs 50</code></pre></figure>
+
+  <div class="note warn">
+    <strong>精度について</strong>
+    <code>train_dataset/retrain_state.json</code> には、以前のモデルで「正解率 約97% / 見逃し率 約17%」という記録があります。
+    見逃しを減らすには転倒側のデータ追加が有効です。また上のサンプルは同じCSVから切り出したデータが学習用と検証用の両方に入るため、
+    検証精度は実力より高めに出ます。厳密に測るときは<strong>CSVファイル単位</strong>で学習用/検証用を分けてください。
+    <code>STRIDE</code> やモデルの層構成は元の実装と同じとは限りません(元コードがリポジトリに無いため)。
+  </div>
+
+  <h3 id="step8-2">8-2 解析エンジン <span class="badge ng">未実装</span></h3>
+  <p>
+    カメラ1台につき1スレッドで解析します。画面のAIカードに出す値(状態/判定/危険度/足の位置/無動作/解析フレーム/fps/自動録画)は、
+    すべてこのエンジンの <code>status</code> が元になります。
+  </p>
+
+  <figure class="code"><figcaption><span class="path">core/ai_engine.py</span><span class="kind">新規作成</span></figcaption>
+<pre data-lang="python" data-check><code>"""リアルタイムAI解析エンジン(MediaPipe Pose → 30フレーム → 転倒/状態LSTM)"""
+import functools
+import threading
+import time
+from collections import deque
+from datetime import timedelta
+from pathlib import Path
+
+import numpy as np
+from django.conf import settings
+from django.db import close_old_connections
+from django.utils import timezone
+
+from . import camera_service
+from .training import SEQ_LEN
+
+<span class="c"># 1フレームあたりの平均移動量がこの値より小さければ「動いていない」とみなす</span>
+STILLNESS_MOVE_THRESHOLD = 0.004
+
+<span class="c"># 状態モデルの日本語ラベル → Alert.detected_state(PersonState)の値</span>
+STATE_TO_PERSON_STATE = {
+    "立っている": "standing", "歩いている": "standing",
+    "立ち上がる": "standing", "前かがみ": "standing",
+    "座っている": "sitting", "しゃがんでいる": "sitting",
+    "横になっている": "lying", "転倒": "lying",
+}
+
+<span class="c"># 骨格として線で結ぶ点の組(MediaPipeの番号: 11=左肩 23=左腰 27=左足首 など)</span>
+<span class="c"># ※ connections という変数名は django.db.connections と紛らわしいので避ける</span>
+POSE_CONNECTIONS = [
+    (11, 12), (11, 13), (13, 15), (12, 14), (14, 16),   <span class="c"># 肩と両腕</span>
+    (11, 23), (12, 24), (23, 24),                       <span class="c"># 胴体</span>
+    (23, 25), (25, 27), (24, 26), (26, 28),             <span class="c"># 両脚</span>
+]
+
+<span class="c"># 学習済みモデルは重いので、全カメラで1組だけ読み込んで使い回す</span>
+_shared = {}
+_shared_lock = threading.Lock()
+_infer_lock = threading.Lock()   <span class="c"># 推論は1度に1カメラずつ行う</span>
+
+
+def _load_shared():
+    """転倒モデル・状態モデル・ラベルを読み込む(2回目以降は読み込み済みを返す)"""
+    with _shared_lock:
+        if _shared:
+            return _shared
+        import tensorflow as tf
+
+        folder = Path(settings.AI_MODEL_DIR)
+        fall_model = tf.keras.models.load_model(folder / "fall_detection_lstm.keras")
+        state_model = tf.keras.models.load_model(folder / "state_detection_lstm.keras")
+        _shared.update(
+            tf=tf,
+            <span class="c"># tf.function で包むと推論が大幅に速くなる(predict() の直接呼び出しは遅い)</span>
+            fall_fn=tf.function(lambda x: fall_model(x, training=False)),
+            state_fn=tf.function(lambda x: state_model(x, training=False)),
+            labels=[str(v) for v in np.load(folder / "state_labels.npy")],
+        )
+        return _shared
+
+
+def _create_landmarker():
+    """姿勢推定器を作る(スレッド間で共有できないため、カメラごとに1つ作る)"""
+    import mediapipe as mp
+
+    options = mp.tasks.vision.PoseLandmarkerOptions(
+        base_options=mp.tasks.BaseOptions(
+            model_asset_path=str(Path(settings.AI_MODEL_DIR) / "pose_landmarker_full.task"),
+        ),
+        running_mode=mp.tasks.vision.RunningMode.VIDEO,   <span class="c"># 連続した映像として処理する</span>
+        num_poses=1,                                      <span class="c"># 検出する人数は1人</span>
+    )
+    return mp, mp.tasks.vision.PoseLandmarker.create_from_options(options)
+
+
+@functools.lru_cache(maxsize=1)
+def _font():
+    """日本語を描ける字体を探す(OpenCV単体では日本語を描けないためPillowを使う)"""
+    from PIL import ImageFont
+
+    for path in ("C:/Windows/Fonts/meiryo.ttc",
+                 "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"):
+        try:
+            return ImageFont.truetype(path, 20)
+        except OSError:
+            continue
+    return ImageFont.load_default()   <span class="c"># 見つからない場合(日本語は化ける)</span>
+
+
+def _draw_overlay(cv2, frame, landmarks, lines, alarm):
+    """映像に骨格と判定結果の文字を重ねた画像を返す"""
+    from PIL import Image, ImageDraw
+
+    out = frame.copy()
+    if landmarks:
+        height, width = out.shape[:2]
+        <span class="c"># 座標は 0〜1 の割合なので、画像の大きさを掛けて画素位置に直す</span>
+        points = [(int(p.x * width), int(p.y * height)) for p in landmarks]
+        for a, b in POSE_CONNECTIONS:
+            cv2.line(out, points[a], points[b], (0, 255, 0), 2)
+        for point in points:
+            cv2.circle(out, point, 3, (0, 200, 255), -1)
+
+    <span class="c"># OpenCV(BGR) → Pillow(RGB) の変換は1フレームにつき1往復だけにする(重い処理のため)</span>
+    image = Image.fromarray(cv2.cvtColor(out, cv2.COLOR_BGR2RGB))
+    draw = ImageDraw.Draw(image)
+    color = (255, 70, 70) if alarm else (255, 255, 255)   <span class="c"># 転倒時は赤字</span>
+    for row, text in enumerate(lines):
+        draw.text((10, 8 + row * 26), text, font=_font(), fill=color,
+                  stroke_width=2, stroke_fill=(0, 0, 0))   <span class="c"># 黒い縁取りで読みやすく</span>
+    return cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR)
+
+
+def _camera_for(device):
+    """このカメラ番号の異常を、台帳(Camera)のどのレコードに紐づけるか"""
+    from .models import Camera
+
+    camera_id = getattr(settings, "AI_ALERT_CAMERA_ID", None)
+    if camera_id:
+        return Camera.objects.filter(id=camera_id).first()
+    <span class="c"># 指定が無ければオンラインの先頭。複数台運用では {カメラ番号: 台帳ID} の対応表にする</span>
+    return Camera.objects.filter(is_online=True).order_by("id").first()
+
+
+def _write_recording(alert_id, kind, frames, started_at, fps):
+    """ためておいたフレームをmp4に書き出し、Recording を作る(別スレッドで実行)"""
+    import cv2
+    import imageio_ffmpeg
+    from .models import Alert, Recording
+
+    try:
+        close_old_connections()
+        alert = Alert.objects.select_related("camera").get(id=alert_id)
+        folder = Path(settings.MEDIA_ROOT) / "recordings"
+        folder.mkdir(parents=True, exist_ok=True)
+        stem = f"ai_{kind}_{timezone.localtime(started_at):%Y%m%d_%H%M%S}_alert{alert_id}"
+
+        <span class="c"># H.264のmp4として書き出す(ブラウザの video タグで再生できる形式)</span>
+        height, width = frames[0].shape[:2]
+        writer = imageio_ffmpeg.write_frames(
+            str(folder / f"{stem}.mp4"), (width, height),
+            fps=fps, codec="libx264", pix_fmt_in="bgr24",   <span class="c"># OpenCVの画像をそのまま渡せる</span>
+        )
+        writer.send(None)                                   <span class="c"># 書き込み開始の合図</span>
+        for frame in frames:
+            writer.send(np.ascontiguousarray(frame))
+        writer.close()
+
+        <span class="c"># 先頭フレームを一覧用のサムネイルにする</span>
+        cv2.imwrite(str(folder / f"{stem}.jpg"), frames[0])
+
+        base_url = settings.MEDIA_URL + "recordings/" + stem
+        Recording.objects.create(
+            kind=Recording.Kind.FALL if kind == Alert.Kind.FALL else Recording.Kind.SUSPICIOUS,
+            camera=alert.camera,
+            alert=alert,
+            started_at=started_at,
+            ended_at=started_at + timedelta(seconds=len(frames) / fps),
+            video_url=base_url + ".mp4",
+            thumbnail_url=base_url + ".jpg",
+            reason="AIが異常を検知したため自動録画",
+            <span class="c"># 録画は検知した瞬間から始まるので、検知マークは0秒地点</span>
+            markers=[{"seconds": 0, "label": alert.kind_label + "を検知"}],
+        )
+        <span class="c"># 異常検知一覧にも同じ実画像を出す</span>
+        Alert.objects.filter(id=alert_id).update(thumbnail_url=base_url + ".jpg")
+    except Exception as exc:
+        <span class="c"># 録画に失敗しても解析は止めない</span>
+        print(f"[RealtimeAI] 録画の書き出しに失敗しました: {exc}")
+
+
+class CameraRuntime:
+    """カメラ1台ぶんの解析スレッドと、その最新結果"""
+
+    def __init__(self, device):
+        self.device = device
+        self.viewers = 0          <span class="c"># ライブ表示を見ているブラウザの数</span>
+        self.persistent = False   <span class="c"># 誰も見ていなくても解析を続けるか</span>
+        self.running = False
+        self.session = 0          <span class="c"># 起動のたびに増やす番号(古いスレッドを確実に止めるため)</span>
+        self.lock = threading.Lock()
+        self.jpeg = None          <span class="c"># 骨格と文字を重ねた最新のJPEG</span>
+        self.frame_seq = 0        <span class="c"># JPEGを更新した回数(配信側が新しい画像か判断する)</span>
+        self.status = {"phase": "idle", "error": ""}
+        self.recording = None     <span class="c"># 録画中だけ {"alert_id", "kind", "frames", "until", "started_at"}</span>
+        self.last_alert_at = 0.0
+        self.last_alert_text = ""
+
+    def start(self):
+        """解析を始める(すでに動いていれば何もしない)"""
+        if self.running:
+            return True
+        if not camera_service.acquire(self.device):
+            self.status = {"phase": "error", "error": "カメラを開けませんでした"}
+            return False
+        self.running = True
+        self.session += 1
+        threading.Thread(
+            target=self._loop, args=(self.session,),
+            name=f"realtime-ai-{self.device}", daemon=True,
+        ).start()
+        return True
+
+    def stop(self):
+        self.running = False
+
+    def _loop(self, session):
+        from .models import AISettings
+
+        cv2, _ = camera_service._load_cv2()
+        landmarker = None
+        try:
+            shared = _load_shared()
+            mp, landmarker = _create_landmarker()
+
+            window = deque(maxlen=SEQ_LEN)   <span class="c"># 直近30フレームの姿勢</span>
+            previous = None                  <span class="c"># 1つ前のフレームの姿勢(動きの量を測る)</span>
+            still_since = time.monotonic()   <span class="c"># 最後に動いた時刻</span>
+            last_timestamp = 0
+            frames = 0
+            fps, fps_count, fps_started = 0.0, 0, time.monotonic()
+            danger, state_label = 0.0, "-"
+            ai, ai_loaded_at = None, 0.0
+            interval = 1.0 / settings.AI_ANALYSIS_FPS
+
+            <span class="c"># 停止された、または新しいスレッドに交代したら抜ける</span>
+            while self.running and self.session == session:
+                loop_started = time.monotonic()
+
+                <span class="c"># AI設定(閾値など)は1秒ごとに読み直す → 誤検知報告による調整がすぐ効く</span>
+                if ai is None or loop_started - ai_loaded_at &gt; 1.0:
+                    close_old_connections()
+                    ai, ai_loaded_at = AISettings.load(), loop_started
+
+                frame = camera_service.read_frame(self.device)
+                if frame is None:
+                    time.sleep(0.05)   <span class="c"># 1回読めなかっただけでは止めない</span>
+                    continue
+
+                <span class="c"># --- 姿勢推定 ---</span>
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                <span class="c"># 時刻は必ず前回より大きい値を渡す(同じか小さいとエラーになる)</span>
+                last_timestamp = max(int(time.monotonic() * 1000), last_timestamp + 1)
+                result = landmarker.detect_for_video(
+                    mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), last_timestamp,
+                )
+                landmarks = result.pose_landmarks[0] if result.pose_landmarks else None
+
+                foot = "-"
+                if landmarks:
+                    <span class="c"># 33点の (x, y, z) を1列に並べた99個の数値にする(学習データと同じ並び)</span>
+                    vector = np.asarray([v for p in landmarks for v in (p.x, p.y, p.z)], dtype="float32")
+                    window.append(vector)
+                    <span class="c"># 前のフレームから十分動いていたら「無動作」の計測をやり直す</span>
+                    if previous is not None and float(np.abs(vector - previous).mean()) &gt;= STILLNESS_MOVE_THRESHOLD:
+                        still_since = loop_started
+                    previous = vector
+                    <span class="c"># 足首(27=左, 28=右)のうち低い方が、画面の下端からどの高さにあるか</span>
+                    foot_y = max(landmarks[27].y, landmarks[28].y)
+                    foot = f"下端から {int((1 - foot_y) * 100)}%"
+                else:
+                    <span class="c"># 人が映っていない → ためた姿勢と判定結果を捨てる</span>
+                    window.clear()
+                    previous, still_since = None, loop_started
+                    danger, state_label = 0.0, "-"
+
+                <span class="c"># --- 30フレームたまったら推論 ---</span>
+                if len(window) == SEQ_LEN:
+                    x = shared["tf"].constant(np.stack(window)[None, ...])   <span class="c"># 形は (1, 30, 99)</span>
+                    with _infer_lock:
+                        danger = float(shared["fall_fn"](x).numpy()[0][0])   <span class="c"># 転倒の確率</span>
+                        probabilities = shared["state_fn"](x).numpy()[0]     <span class="c"># 8クラスの確率</span>
+                    state_label = shared["labels"][int(probabilities.argmax())]
+
+                still_seconds = int(loop_started - still_since)
+                is_fall = danger &gt;= ai.fall_threshold
+
+                <span class="c"># --- 異常の判定(設定画面でAIが停止中なら通知しない) ---</span>
+                if ai.enabled and landmarks:
+                    if is_fall:
+                        <span class="c"># 信頼度は 0.0〜1.0 で保存する(百分率で入れると表示が壊れる)</span>
+                        self._raise_alert("fall", danger, state_label, ai)
+                    elif still_seconds &gt;= ai.stillness_seconds:
+                        self._raise_alert("suspicious", min(0.99, 0.55 + still_seconds / 200), state_label, ai)
+                        still_since = loop_started
+
+                <span class="c"># --- 解析fpsの計測(1秒ごとに更新) ---</span>
+                frames += 1
+                fps_count += 1
+                if loop_started - fps_started &gt;= 1.0:
+                    fps = fps_count / (loop_started - fps_started)
+                    fps_count, fps_started = 0, loop_started
+
+                <span class="c"># --- 描画: 見ている人がいる時か録画中だけ行う(負荷を下げる) ---</span>
+                if self.viewers &gt; 0 or self.recording is not None:
+                    drawn = _draw_overlay(cv2, frame, landmarks, [
+                        f"状態: {state_label}",
+                        f"判定: {'転倒' if is_fall else '正常'}  危険度: {danger:.0%}",
+                        f"無動作: {still_seconds}/{ai.stillness_seconds}秒",
+                    ], is_fall)
+                    ok, buffer = cv2.imencode(".jpg", drawn, [int(cv2.IMWRITE_JPEG_QUALITY), settings.AI_JPEG_QUALITY])
+                    if ok:
+                        with self.lock:
+                            self.jpeg = buffer.tobytes()
+                            self.frame_seq += 1
+                    self._feed_recording(drawn, max(1.0, round(fps)))
+
+                <span class="c"># --- 画面のAIカードに出す値 ---</span>
+                self.status = {
+                    "phase": "running", "error": "",
+                    "state_label": state_label,
+                    "judge": "転倒" if is_fall else "正常",
+                    "danger": round(danger, 2),
+                    "foot": foot,
+                    "still_seconds": still_seconds,
+                    "still_limit": ai.stillness_seconds,
+                    "frames": frames,
+                    "fps": round(fps, 1),
+                    "recording": self.recording is not None,
+                    "last_alert": self.last_alert_text,
+                }
+
+                <span class="c"># 解析回数を AI_ANALYSIS_FPS 以下に抑える(CPUを使い切らない)</span>
+                elapsed = time.monotonic() - loop_started
+                if elapsed &lt; interval:
+                    time.sleep(interval - elapsed)
+        except Exception as exc:
+            self.status = {"phase": "error", "error": f"{type(exc).__name__}: {exc}"}
+        finally:
+            if landmarker is not None:
+                landmarker.close()
+            camera_service.release(self.device)
+            <span class="c"># 自分が最新のスレッドの時だけ「停止」にする(新しいスレッドの邪魔をしない)</span>
+            if self.session == session:
+                self.running = False
+                if self.status.get("phase") != "error":
+                    self.status = {"phase": "idle", "error": ""}
+
+    def _raise_alert(self, kind, confidence, state_label, ai):
+        """異常(Alert)を1件作り、録画を開始する"""
+        from .models import Alert
+
+        <span class="c"># クールダウン: 同じカメラで続けて鳴らさない</span>
+        now_monotonic = time.monotonic()
+        if self.last_alert_at and now_monotonic - self.last_alert_at &lt; ai.cooldown_seconds:
+            return
+        camera = _camera_for(self.device)
+        if camera is None:
+            return
+        self.last_alert_at = now_monotonic
+
+        now = timezone.now()
+        alert = Alert.objects.create(
+            kind=kind,
+            camera=camera,
+            occurred_at=now,
+            confidence=round(confidence, 2),
+            detected_state=STATE_TO_PERSON_STATE.get(state_label, "unknown"),
+        )
+        self.last_alert_text = f"最新の検知: {alert.kind_label} / {timezone.localtime(now):%H:%M:%S}"
+
+        <span class="c"># ここから AI_RECORDING_SECONDS 秒ぶんのフレームをためる</span>
+        self.recording = {
+            "alert_id": alert.id, "kind": kind, "frames": [],
+            "started_at": now,
+            "until": now_monotonic + settings.AI_RECORDING_SECONDS,
+        }
+
+    def _feed_recording(self, frame, fps):
+        """録画中ならフレームを足し、時間になったら書き出しを依頼する"""
+        recording = self.recording
+        if recording is None:
+            return
+        recording["frames"].append(frame)
+        if time.monotonic() &gt;= recording["until"]:
+            self.recording = None
+            <span class="c"># mp4の書き出しは時間がかかるので別スレッドに任せる(解析を止めない)</span>
+            threading.Thread(
+                target=_write_recording, name="ai-recording-writer", daemon=True,
+                args=(recording["alert_id"], recording["kind"], recording["frames"], recording["started_at"], fps),
+            ).start()
+
+
+class RealtimeAIEngine:
+    """全カメラの CameraRuntime をまとめて管理する(アプリ全体で1つだけ)"""
+
+    def __init__(self):
+        self._runtimes = {}
+        self._lock = threading.Lock()
+
+    def _runtime(self, device):
+        with self._lock:
+            return self._runtimes.setdefault(device, CameraRuntime(device))
+
+    def attach(self, device):
+        """ライブ表示の開始: 視聴者を1人増やし、止まっていれば解析を始める"""
+        runtime = self._runtime(device)
+        if not runtime.start():
+            return False
+        runtime.viewers += 1
+        return True
+
+    def detach(self, device):
+        """ライブ表示の終了: 誰も見ておらず常時稼働でもなければ解析を止める"""
+        runtime = self._runtime(device)
+        runtime.viewers = max(0, runtime.viewers - 1)
+        if runtime.viewers == 0 and not runtime.persistent:
+            runtime.stop()
+
+    def start_persistent(self, device):
+        """常時稼働: 画面を開いていなくても解析を続ける"""
+        runtime = self._runtime(device)
+        runtime.persistent = True
+        return runtime.start()
+
+    def latest_jpeg(self, device):
+        """(更新回数, 最新JPEG) を返す"""
+        runtime = self._runtime(device)
+        with runtime.lock:
+            return runtime.frame_seq, runtime.jpeg
+
+    def status(self, device=None):
+        """AIカード用の状態。device 指定が無ければ動いているカメラを代表にする"""
+        with self._lock:
+            runtimes = dict(self._runtimes)
+        <span class="c"># 「全カメラの稼働状況」表の1行ぶんずつ</span>
+        devices = [
+            {
+                "device": key,
+                "phase": rt.status.get("phase", "idle"),
+                "state_label": rt.status.get("state_label", "-"),
+                "judge": rt.status.get("judge", "-"),
+                "fps": rt.status.get("fps", 0),
+                "still_seconds": rt.status.get("still_seconds", 0),
+                "viewers": rt.viewers,
+                "persistent": rt.persistent,
+                "error": rt.status.get("error", ""),
+            }
+            for key, rt in sorted(runtimes.items())
+        ]
+        target = runtimes.get(device)
+        if target is None:
+            running = [rt for rt in runtimes.values() if rt.status.get("phase") == "running"]
+            target = running[0] if running else None
+        body = dict(target.status) if target else {"phase": "idle", "error": ""}
+        body.update(
+            enabled=True,
+            persistent=bool(target and target.persistent),
+            devices=devices,
+            retrain=None,   <span class="c"># 自動再学習を実装したら、最終実行の要約文字列を入れる</span>
+        )
+        return body
+
+
+<span class="c"># アプリ全体で共有する唯一のエンジン</span>
+engine = RealtimeAIEngine()</code></pre></figure>
+
+  <div class="note">
+    <strong>画面項目の定義について</strong>
+    「足の位置」は元の実装の定義がリポジトリから読み取れないため、サンプルでは
+    「足首が画面下端からどの高さにあるか」としています。元の意味が分かる場合は <code>foot</code> の計算を差し替えてください。
+    「自動再学習 最終: …」の表示も、元の実装(起動時に学習データの変更を検知して再学習)が無いため
+    <code>retrain=None</code>(非表示)にしています。
+  </div>
+
+  <h3 id="step8-3">8-3 起動制御(シミュレーターと常時稼働) <span class="badge warn">要修正</span></h3>
+  <p>
+    現在の <code>apps.py</code> は <code>migrate</code> や <code>seed_demo</code> の実行時にもシミュレーターを起動します。
+    「Webサーバーとして動いている時だけ」「設定で有効な時だけ」に絞ります。
+  </p>
+
+  <figure class="code"><figcaption><span class="path">core/apps.py</span><span class="kind">置き換え</span></figcaption>
+<pre data-lang="python" data-check><code>import os
+import sys
+import threading
+import time
+
+from django.apps import AppConfig
+
+
+class CoreConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "core"
+
+    def ready(self):
+        """Webサーバーとして起動した時だけ、裏方の処理を始める"""
+        <span class="c"># migrate / seed_demo / ai_train などの管理コマンドでは何も起動しない</span>
+        if "runserver" not in sys.argv:
+            return
+        <span class="c"># runserver は「監視役」と「実際に応答する役」の2プロセスで動く。</span>
+        <span class="c"># 両方で起動するとカメラを取り合うため、応答する役(RUN_MAIN=true)だけで始める</span>
+        if "--noreload" not in sys.argv and os.environ.get("RUN_MAIN") != "true":
+            return
+        threading.Thread(target=_boot_background, name="care-sec-boot", daemon=True).start()
+
+
+def _boot_background():
+    from django.conf import settings
+
+    time.sleep(2)   <span class="c"># サーバーの起動処理が落ち着くのを少し待つ</span>
+
+    <span class="c"># --- デモ用シミュレーター(乱数で異常を作る) ---</span>
+    if getattr(settings, "AI_SIMULATOR_ENABLED", False):
+        from .ai_simulator import simulator
+        simulator.start()
+
+    <span class="c"># --- 実カメラの常時解析 ---</span>
+    if getattr(settings, "AI_REALTIME_ENABLED", False) and getattr(settings, "AI_ALWAYS_ON", False):
+        from . import camera_service
+        from .ai_engine import engine
+
+        devices = camera_service.detect_devices().get("devices", [])
+        <span class="c"># 番号の大きいカメラから1台ずつ順番に開く。</span>
+        <span class="c"># (同時に開くと後から開いた側が映像を出さない機種があったため)</span>
+        for device in sorted(devices, key=lambda d: d["index"], reverse=True):
+            engine.start_persistent(device["index"])</code></pre></figure>
+
+  <div class="note warn">
+    <strong>実AIに切り替える時の設定</strong>
+    <code>AI_REALTIME_ENABLED = True</code> にしたら、<code>AI_SIMULATOR_ENABLED = False</code> にしてください。
+    両方 True だと、乱数の異常と本物の異常が混ざります。<br>
+    未使用の <code>core/ai_monitor.py</code> は旧版のシミュレーターで、どこからも呼ばれていません
+    (<code>PersonState</code> の import 漏れもあり、呼ぶと動きません)。削除して構いません。
+  </div>
+
+  <h3 id="step8-4">8-4 映像配信をエンジン経由に切り替える <span class="badge ng">未実装</span></h3>
+  <p>
+    AIが読んでいるカメラを配信側も直接読むと、1枚のフレームを取り合ってどちらかが欠けます。
+    AI有効時は<strong>エンジンが描画済みの最新画像を配る</strong>形にします。
+  </p>
+
+  <figure class="code"><figcaption><span class="path">core/views.py</span><span class="kind">debug_camera_stream を置き換え</span></figcaption>
+<pre data-lang="python" data-check><code>@login_required
+def debug_camera_stream(request):
+    """選択デバイスのMJPEGストリーム(?device=インデックス)"""
+    try:
+        index = int(request.GET.get("device", ""))
+    except ValueError:
+        return HttpResponse("deviceパラメータが不正です", status=400)
+
+    use_ai = getattr(dj_settings, "AI_REALTIME_ENABLED", False)
+    if use_ai:
+        from .ai_engine import engine
+        opened = engine.attach(index)            <span class="c"># 解析を開始し、視聴者として参加</span>
+    else:
+        opened = camera_service.acquire(index)   <span class="c"># AI無し: カメラを直接開く</span>
+    if not opened:
+        return HttpResponse("カメラを開けませんでした(接続確認または他アプリ使用中の可能性)", status=503)
+
+    def generate():
+        last_seq = -1
+        last_frame_at = time.monotonic()
+        try:
+            while True:
+                if use_ai:
+                    <span class="c"># エンジンが作った「骨格+判定入り」の最新画像を受け取る</span>
+                    seq, frame = engine.latest_jpeg(index)
+                    if frame is None or seq == last_seq:
+                        <span class="c"># まだ新しい画像が無い。60秒続いたら切断とみなして終了</span>
+                        if time.monotonic() - last_frame_at &gt; 60:
+                            break
+                        time.sleep(0.03)
+                        continue
+                    last_seq = seq
+                else:
+                    frame = camera_service.read_jpeg(index)
+                    if frame is None:
+                        break
+                    time.sleep(1.0 / 15)   <span class="c"># 配信は約15fpsまで</span>
+                last_frame_at = time.monotonic()
+                <span class="c"># multipart形式: 区切り文字 → JPEG1枚 を延々と送り続ける</span>
+                yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
+        finally:
+            <span class="c"># ブラウザが切断したら必ず後始末する(カメラを掴んだままにしない)</span>
+            if use_ai:
+                engine.detach(index)
+            else:
+                camera_service.release(index)
+
+    response = StreamingHttpResponse(generate(), content_type="multipart/x-mixed-replace; boundary=frame")
+    response["Cache-Control"] = "no-store"
+    return response</code></pre></figure>
+
+  <p>最後に、AIカードを1秒ごとに更新するJSを追加します。</p>
+
+  <figure class="code"><figcaption><span class="path">static/js/debug_camera.js</span><span class="kind">loadDevices(false); の直前に追加</span></figcaption>
+<pre><code><span class="c">/* ---------- リアルタイムAIの状態表示 ---------- */</span>
+var aiRoot = document.getElementById("ai-status");
+
+<span class="c">// 指定したidの要素に文字を入れる小さな補助関数</span>
+function setText(id, text) {
+  var el = document.getElementById(id);
+  if (el) { el.textContent = text; }
+}
+
+function renderAiDevices(list) {
+  var table = document.getElementById("ai-devices");
+  var tbody = table.querySelector("tbody");
+  tbody.innerHTML = "";
+  list.forEach(function (d) {
+    var tr = document.createElement("tr");
+    <span class="c">// テンプレートの見出し順: index / 状態 / 判定 / 解析fps / 無動作 / 視聴 / 稼働</span>
+    [
+      d.device, d.state_label, d.judge, d.fps + " fps", d.still_seconds + " 秒",
+      d.viewers + " 人",
+      d.phase === "running" ? (d.persistent ? "常時解析中" : "解析中") : (d.error || "停止")
+    ].forEach(function (value) {
+      var td = document.createElement("td");
+      td.textContent = value;   <span class="c">// textContent を使う(文字列をHTMLとして解釈させない)</span>
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  table.hidden = list.length === 0;
+}
+
+function pollAi() {
+  <span class="c">// カメラを選択中ならそのカメラ、未選択なら代表のカメラの状態を取得する</span>
+  var url = aiRoot.dataset.aiStatusUrl + (selected ? "?device=" + selected.index : "");
+  fetch(url, { headers: { Accept: "application/json" } })
+    .then(function (res) { return res.json(); })
+    .then(function (s) {
+      if (!s.enabled) { return; }
+      var running = s.phase === "running";
+
+      <span class="c">// 右上のチップ: 待機中 / 解析中 / 常時解析中</span>
+      var chip = document.getElementById("ai-chip");
+      chip.textContent = running ? (s.persistent ? "常時解析中 " : "解析中 ") + s.fps + "fps" : "待機中";
+      chip.className = "chip" + (running ? " chip--resolved" : "");
+
+      <span class="c">// 8つの値</span>
+      setText("ai-state", running ? s.state_label : "-");
+      setText("ai-judge", running ? s.judge : "-");
+      setText("ai-danger", running ? Math.round(s.danger * 100) + "%" : "-");
+      setText("ai-foot", running ? s.foot : "-");
+      setText("ai-still", running ? s.still_seconds + " / " + s.still_limit + "秒" : "-");
+      setText("ai-frames", running ? s.frames : "-");
+      setText("ai-fps", running ? s.fps : "-");
+      setText("ai-recording", running ? (s.recording ? "● 録画中" : "待機") : "-");
+
+      <span class="c">// 転倒と判定している間は「判定」を赤くする</span>
+      document.getElementById("ai-judge").classList.toggle("is-danger", running &amp;&amp; s.judge === "転倒");
+
+      <span class="c">// エラーと直近の検知</span>
+      var errorEl = document.getElementById("ai-error");
+      errorEl.textContent = s.error || "";
+      errorEl.hidden = !s.error;
+      var lastEl = document.getElementById("ai-last-alert");
+      lastEl.textContent = s.last_alert || "";
+      lastEl.hidden = !s.last_alert;
+
+      renderAiDevices(s.devices || []);
+    })
+    .catch(function () { <span class="c">/* 一時的な通信失敗は次回に任せる */</span> });
+}
+
+<span class="c">// AIが有効(カードが表示されている)時だけ、1秒ごとに更新する</span>
+if (aiRoot &amp;&amp; !aiRoot.hidden) {
+  pollAi();
+  setInterval(pollAi, 1000);
+}</code></pre></figure>
+
+  <h3 id="step8-5">8-5 立ち入り禁止ゾーンの検知 <span class="badge ng">未実装</span></h3>
+  <p>
+    異常の種類に「立ち入り禁止ゾーン」がありますが、実検知の仕組みがありません。
+    カメラごとに禁止エリア(多角形)を登録し、足の位置がその中に入ったら異常にします。
+  </p>
+
+  <figure class="code"><figcaption><span class="path">core/models.py</span><span class="kind">Camera に追加 → makemigrations / migrate</span></figcaption>
+<pre data-lang="python" data-check><code>class Camera(models.Model):
+    <span class="c"># ...既存フィールドはそのまま...</span>
+
+    <span class="c"># 禁止エリアの頂点。画面の左上を(0,0)、右下を(1,1)とした割合で指定する</span>
+    <span class="c"># 例(画面の右端15%): [[0.85, 0], [1, 0], [1, 1], [0.85, 1]]</span>
+    restricted_zone = models.JSONField("立ち入り禁止ゾーン", default=list, blank=True)</code></pre></figure>
+
+  <figure class="code"><figcaption><span class="path">core/ai_engine.py</span><span class="kind">関数を追加</span></figcaption>
+<pre data-lang="python" data-check><code>def in_restricted_zone(cv2, zone, x, y):
+    """点 (x, y) が禁止エリアの多角形の中にあるか"""
+    if len(zone) &lt; 3:
+        return False   <span class="c"># 3点未満は多角形にならない(未設定)</span>
+    polygon = np.asarray(zone, dtype="float32")
+    <span class="c"># 戻り値: 内側=正、境界=0、外側=負</span>
+    return cv2.pointPolygonTest(polygon, (float(x), float(y)), False) &gt;= 0</code></pre></figure>
+
+  <p>
+    解析ループの「異常の判定」に、次の分岐を足します。足の位置は両足首の中点を使います。
+    禁止エリアの値は毎フレームDBを読まないよう、AI設定と同じタイミング(1秒ごと)で読み直してください。
+  </p>
+
+  <figure class="code"><figcaption><span class="path">core/ai_engine.py</span><span class="kind">_loop の判定部分に追加</span></figcaption>
+<pre data-lang="python" data-check><code>def check_zone(runtime, cv2, landmarks, zone, state_label, ai):
+    """足が禁止エリアに入っていたら「立ち入り禁止ゾーン」の異常を出す"""
+    <span class="c"># 左右の足首(27, 28)の中点を「立っている位置」とみなす</span>
+    foot_x = (landmarks[27].x + landmarks[28].x) / 2
+    foot_y = (landmarks[27].y + landmarks[28].y) / 2
+    if in_restricted_zone(cv2, zone, foot_x, foot_y):
+        <span class="c"># 信頼度は足首の検出の確からしさ(visibility)を使う</span>
+        confidence = min(landmarks[27].visibility, landmarks[28].visibility)
+        runtime._raise_alert("zone", confidence, state_label, ai)</code></pre></figure>
+
+  <p>
+    <code>Recording.Kind</code> には zone が無いため、<code>_write_recording</code> では既存のシミュレーターと同じく
+    「あやしい場面」として保存されます(サンプルはその動作になっています)。
+    禁止エリアは管理画面(<code>/admin/</code>)のカメラ編集でJSONとして入力できます。
+  </p>
+  <label class="step-check"><input type="checkbox" data-key="s8"> <span>STEP 8 完了: カメラの前で動くとAIカードの値が変わり、転倒動作で異常と録画が作られる</span></label>
+</section>
+
+<!-- ============================================================ -->
+<section id="step9">
+  <h2>STEP 9. 動作検証</h2>
+
+  <h3>9-1 自動検証コマンドを更新</h3>
+  <p><code>verify_pages</code> は設定画面・異常詳細・新しいAPIを確認していません。URLを追加します。</p>
+
+  <figure class="code"><figcaption><span class="path">core/management/commands/verify_pages.py</span><span class="kind">URL一覧を置き換え</span></figcaption>
+<pre data-lang="python" data-check><code><span class="c"># ログイン済みで 200 が返るべきURL</span>
+PAGES = [
+    "/", "/alerts/", "/alerts/?status=open", "/alerts/?status=responding",
+    "/alerts/?status=resolved",
+    "/alerts/?status=false_positive",          <span class="c"># 追加: 誤検知フィルタ</span>
+    "/alerts/?kind=fall&amp;date_from=2026-01-01",  <span class="c"># 追加: 詳細フィルタ</span>
+    "/recordings/", "/recordings/?kind=fall",
+    "/accounts/profile/",
+    "/accounts/settings/",                     <span class="c"># 追加: 設定画面</span>
+    "/api/alerts/",
+    "/debug/camera/", "/debug/camera/devices/",
+    "/debug/camera/progress/",                 <span class="c"># 追加: 検知の進行バーAPI</span>
+    "/debug/camera/ai/",                       <span class="c"># 追加: AI状態API</span>
+]</code></pre></figure>
+  <p>
+    <code>for url in [...]</code> を <code>for url in PAGES:</code> に変えます。あわせて、録画と同じ要領で
+    <code>alert = Alert.objects.first()</code> を取り、<code>check("get", f"/alerts/{alert.id}/", 200, client)</code> を追加すると異常詳細も確認できます。
+  </p>
+
+  <figure class="code"><figcaption><span class="path">PowerShell</span></figcaption>
+<pre><code><span class="c"># 設定やモデル定義に問題が無いか</span>
+python manage.py check
+
+<span class="c"># モデルを変更した場合(STEP 2-2 / 8-5)はテーブルに反映</span>
+python manage.py makemigrations
+python manage.py migrate
+
+<span class="c"># 全ページと「対応 → 解決 → 報告」の流れを自動確認</span>
+python manage.py verify_pages</code></pre></figure>
+
+  <h3>9-2 画面での確認項目</h3>
+  <div class="table-scroll">
+  <table>
+    <tr><th>#</th><th>操作</th><th>期待する結果</th></tr>
+    <tr><td>1</td><td>ログインする</td><td>ダッシュボードが開く(404にならない)</td></tr>
+    <tr><td>2</td><td>設定 →「手動で異常検知を発生させる」</td><td>緑のメッセージ。5秒以内に別タブでトーストと通知音、未対応バッジが+1</td></tr>
+    <tr><td>3</td><td>異常検知 →「対応する」</td><td>状況が「対応中」になり、別ユーザーの画面にも対応者名が出る</td></tr>
+    <tr><td>4</td><td>「解決・報告を入力」→ 報告を保存</td><td>プロフィールの報告履歴に1行増える。異常詳細に解決報告が出る</td></tr>
+    <tr><td>5</td><td>異常詳細 →「誤検知として報告」</td><td>状況が「誤検知」。設定画面の転倒閾値が 0.02 上がる</td></tr>
+    <tr><td>6</td><td>設定 → AI自動検知をOFF</td><td>サイドバーが「停止中」になる。新しい異常が出なくなる</td></tr>
+    <tr><td>7</td><td>録画一覧 → 再生 → 検知マークのボタン</td><td>その秒数へ移動して再生される</td></tr>
+    <tr><td>8</td><td>カメラデバッグ →「再検知」</td><td>進行バーが進み、デバイス一覧が出る(解像度が 幅×高さ の順)</td></tr>
+    <tr><td>9</td><td>デバイスを選び「表示開始」→「停止」</td><td>映像が出る/止まる。再度「表示開始」できる</td></tr>
+    <tr><td>10</td><td>(STEP 8 後)カメラの前で立つ・座る</td><td>AIカードの「状態」が変わる。解析fpsが10前後</td></tr>
+    <tr><td>11</td><td>(STEP 8 後)安全な場所で転倒動作をする</td><td>異常が1件作られ、約8秒後に録画一覧へ実映像が出る。一覧のサムネイルが実画像になる</td></tr>
+    <tr><td>12</td><td>(STEP 8 後)無動作検知の秒数ぶん静止する</td><td>「あやしい動き」の異常が作られる</td></tr>
+  </table>
+  </div>
+  <label class="step-check"><input type="checkbox" data-key="s9"> <span>STEP 9 完了: verify_pages が全て OK</span></label>
+</section>
+
+<!-- ============================================================ -->
+<section id="appendix">
+  <h2>付録</h2>
+
+  <h3>A. 変更・追加するファイル一覧</h3>
+  <div class="table-scroll">
+  <table>
+    <tr><th>ファイル</th><th>種別</th><th>STEP</th></tr>
+    <tr><td><code>config/settings.py</code></td><td>変更</td><td>0, 1-3</td></tr>
+    <tr><td><code>config/urls.py</code></td><td>変更</td><td>6, 7-1</td></tr>
+    <tr><td><code>core/context_processors.py</code></td><td>変更</td><td>1-2</td></tr>
+    <tr><td><code>core/models.py</code></td><td>変更(要マイグレーション: 2-2, 8-5)</td><td>2-2, 3-1, 8-5</td></tr>
+    <tr><td><code>core/views.py</code></td><td>変更</td><td>1-2, 3, 4, 5-2, 7-1, 8-4</td></tr>
+    <tr><td><code>core/camera_service.py</code></td><td>変更</td><td>7-2</td></tr>
+    <tr><td><code>core/ai_simulator.py</code></td><td>変更</td><td>1-4, 5-1</td></tr>
+    <tr><td><code>core/apps.py</code></td><td>変更</td><td>8-3</td></tr>
+    <tr><td><code>core/training.py</code></td><td>新規</td><td>8-1</td></tr>
+    <tr><td><code>core/management/commands/ai_train.py</code></td><td>新規</td><td>8-1</td></tr>
+    <tr><td><code>core/ai_engine.py</code></td><td>新規</td><td>8-2, 8-5</td></tr>
+    <tr><td><code>core/management/commands/verify_pages.py</code></td><td>変更</td><td>9-1</td></tr>
+    <tr><td><code>templates/base.html</code> / <code>accounts/login.html</code></td><td>変更</td><td>1</td></tr>
+    <tr><td><code>static/js/app.js</code> / <code>debug_camera.js</code></td><td>変更</td><td>1, 3-3, 7-3, 8-4</td></tr>
+    <tr><td><code>static/css/style.css</code></td><td>変更</td><td>1-1, 2-1, 7-3</td></tr>
+    <tr><td><code>ai_models/</code></td><td>新規(ダウンロード + 学習で生成)</td><td>8-1</td></tr>
+  </table>
+  </div>
+
+  <h3>B. 実カメラ運用で踏みやすい問題</h3>
+  <p><code>INTEGRATION_STATUS.md</code> に記録されている実測結果のうち、作り直す際に再発しやすいものです。</p>
+  <div class="table-scroll">
+  <table>
+    <tr><th>症状</th><th>原因</th><th>対策</th></tr>
+    <tr><td>解析が1〜2fpsしか出ない</td><td><code>model.predict()</code> を毎フレーム呼んでいる</td><td><code>tf.function</code> で包む(8-2 のサンプルは対応済み)</td></tr>
+    <tr><td>全ページが応答しなくなる</td><td>日本語描画で画像形式の変換を1フレームに何度も行っている</td><td>変換は1往復にまとめ、視聴者がいない時は描画しない(対応済み)</td></tr>
+    <tr><td>全ページが応答しなくなる</td><td><code>runserver</code> を二重に起動し、カメラを取り合っている</td><td>起動は1つだけにする。古いプロセスを止めてから起動</td></tr>
+    <tr><td>「停止 → 表示開始」で映像が出ない</td><td>古い解析スレッドの後始末が新しい解析を止めている</td><td>起動ごとの番号(session)で見分ける(対応済み)</td></tr>
+    <tr><td>ライブ表示がコマ落ち・エラーになる</td><td>AIと配信が同じカメラを別々に読んでいる</td><td>配信はエンジンの最新画像を配る(8-4)</td></tr>
+    <tr><td>カメラが一覧に出ない</td><td>Windows の既定バックエンドで数十秒固まる機種がある</td><td><code>cv2.CAP_DSHOW</code> を指定(7-2 の注記)</td></tr>
+    <tr><td>2台目のカメラが1fpsになる</td><td>同じUSBコントローラに2台つないでいる(機器側の制約)</td><td>別のUSBコントローラに分ける、またはネットワークカメラにする</td></tr>
+    <tr><td>判定が不安定</td><td>学習データと推論で映像の左右の向きが違う</td><td>推論時に左右反転しない(サンプルは反転なし)</td></tr>
+  </table>
+  </div>
+
+  <h3>C. 本番公開の前に必要な設定</h3>
+  <ul>
+    <li><code>SECRET_KEY</code> がソースに直書きされています。環境変数から読む形に変え、値を作り直してください。</li>
+    <li><code>DEBUG = False</code> にする。その場合 <code>static/</code> と <code>media/</code> は Nginx などから配信します(動画の途中再生に必要な範囲指定リクエストにも対応できます)。</li>
+    <li>解析エンジンはWebサーバーと同じプロセス内で動きます。gunicorn を使う場合は<strong>ワーカー1・スレッド複数</strong>(例: <code>--workers 1 --threads 8</code>)にしてください。ワーカーを増やすとカメラを取り合います。</li>
+    <li>8-3 の起動判定は <code>runserver</code> を前提にしています。gunicorn で動かす場合は、環境変数(例: <code>CARESEC_BACKGROUND=1</code>)でも起動できるよう条件を足してください。</li>
+    <li><code>encrypt_db.py</code> は検証用の簡易的な方式です。<code>AWS構成図.md</code> の方針どおり、本番はディスクの暗号化を使ってください。</li>
+  </ul>
+</section>
+
+</main>
+</div>
+
+<script>
+(function () {
+  // ---- コードブロックにコピーボタンを付ける ----
+  document.querySelectorAll('figure.code').forEach(function (figure) {
+    var caption = figure.querySelector('figcaption');
+    var pre = figure.querySelector('pre');
+    if (!caption || !pre) { return; }
+    var button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = 'コピー';
+    button.addEventListener('click', function () {
+      if (!navigator.clipboard) { return; }
+      navigator.clipboard.writeText(pre.innerText).then(function () {
+        button.textContent = 'コピーしました';
+        setTimeout(function () { button.textContent = 'コピー'; }, 1500);
+      });
+    });
+    caption.appendChild(button);
+  });
+
+  // ---- 完了チェックをこのブラウザに保存する(保存できない環境では何もしない) ----
+  document.querySelectorAll('.step-check input').forEach(function (box) {
+    var key = 'caresec-manual-' + box.dataset.key;
+    try { box.checked = localStorage.getItem(key) === '1'; } catch (e) { /* 無視 */ }
+    box.addEventListener('change', function () {
+      try { localStorage.setItem(key, box.checked ? '1' : '0'); } catch (e) { /* 無視 */ }
+    });
+  });
+})();
+</script>
+</body>
+</html>
