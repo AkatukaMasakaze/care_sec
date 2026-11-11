@@ -21,6 +21,15 @@ class UserManager(BaseUserManager):
         extra_fields.setdefault("is_admin", True)
         return self.create_user(username, email, password, **extra_fields)
 
+    def create_superuser(self, username, email=None, password=None, **extra_fields):
+        """`python manage.py createsuperuser` が呼び出すメソッド
+
+        Django の createsuperuser コマンドは、マネージャの create_superuser() を
+        必ず呼ぶ。本システムには superuser の概念が無いので、管理者(is_admin=True)
+        の作成と同じ扱いにする。
+        """
+        return self.create_admin(username, email, password, **extra_fields)
+
 
 class User(AbstractBaseUser):
     """介護士アカウント
