@@ -74,7 +74,7 @@ def detect_progress():
         data["elapsed"] = round(time.monotonic() - data["started_at"], 1)
     else:
         data["elapsed"] = None
-    data["devices"] = list(_detect_partial)
+    data["devices"] = merged_devices(_detect_partial)
     return data
 
 
@@ -575,6 +575,49 @@ def network_sources():
             "kind": "ip",
         })
     return sources
+
+
+def network_devices():
+    """台帳のネットワークカメラを、一覧用のdictに組み替える
+
+    `/debug/camera/devices/` と `/debug/camera/progress/` の**両方**で必要。
+    以前はビュー側にしか無かったため、progress(=検知完了時にブラウザが受け取る一覧)
+    からIPカメラが欠落し、カードが消える事故が起きた(実測)。
+    """
+    media_url = settings.MEDIA_URL or "/media/"
+    snapshot_dir = Path(settings.MEDIA_ROOT) / "camera_snapshots"
+    devices = []
+    for source in network_sources():
+        thumb = snapshot_dir / snapshot_name(source["key"])
+        devices.append({
+            "index": source["key"],
+            "key": source["key"],
+            "kind": "ip",
+            "name": source["name"],
+            "location": source["location"],
+            "url": source["url"],
+            "width": None,
+            "height": None,
+            "backend": "IP",
+            "available": True,
+            "in_use": source["key"] in stream_keys(),
+            "snapshot_url": (
+                f"{media_url}camera_snapshots/{thumb.name}?t={int(thumb.stat().st_mtime)}"
+                if thumb.exists() else None
+            ),
+        })
+    return devices
+
+
+def merged_devices(devices):
+    """USB検知結果 + IPカメラ台帳(重複なし)"""
+    out = list(devices or [])
+    known = {str(item.get("index")) for item in out}
+    for item in network_devices():
+        if str(item["index"]) not in known:
+            out.append(item)
+            known.add(str(item["index"]))
+    return out
 
 
 def _network_url(key):
