@@ -74,7 +74,7 @@ def detect_progress():
         data["elapsed"] = round(time.monotonic() - data["started_at"], 1)
     else:
         data["elapsed"] = None
-    data["devices"] = list(_detect_partial)
+    data["devices"] = merged_devices(_detect_partial)
     return data
 
 
@@ -577,6 +577,49 @@ def network_sources():
     return sources
 
 
+def network_devices():
+    """台帳のネットワークカメラを、一覧用のdictに組み替える
+
+    `/debug/camera/devices/` と `/debug/camera/progress/` の**両方**で必要。
+    以前はビュー側にしか無かったため、progress(=検知完了時にブラウザが受け取る一覧)
+    からIPカメラが欠落し、カードが消える事故が起きた(実測)。
+    """
+    media_url = settings.MEDIA_URL or "/media/"
+    snapshot_dir = Path(settings.MEDIA_ROOT) / "camera_snapshots"
+    devices = []
+    for source in network_sources():
+        thumb = snapshot_dir / snapshot_name(source["key"])
+        devices.append({
+            "index": source["key"],
+            "key": source["key"],
+            "kind": "ip",
+            "name": source["name"],
+            "location": source["location"],
+            "url": source["url"],
+            "width": None,
+            "height": None,
+            "backend": "IP",
+            "available": True,
+            "in_use": source["key"] in stream_keys(),
+            "snapshot_url": (
+                f"{media_url}camera_snapshots/{thumb.name}?t={int(thumb.stat().st_mtime)}"
+                if thumb.exists() else None
+            ),
+        })
+    return devices
+
+
+def merged_devices(devices):
+    """USB検知結果 + IPカメラ台帳(重複なし)"""
+    out = list(devices or [])
+    known = {str(item.get("index")) for item in out}
+    for item in network_devices():
+        if str(item["index"]) not in known:
+            out.append(item)
+            known.add(str(item["index"]))
+    return out
+
+
 def _network_url(key):
     for source in network_sources():
         if source["key"] == key:
@@ -647,7 +690,8 @@ def _acquire_network(cv2, key):
             "last_reconnect": 0.0,
             "info": _network_info(key, url, frame, cap),
             # ---- 最新1枚だけを残す枠(読取スレッドが更新する) ----
-            "frame": frame,
+            # frame もここでコピーしておく(以降の cap.read() で内部バッファが再利用される)
+            "frame": frame.copy(),
             "seq": 1,
             "ts": time.monotonic(),
             "served": 0,
@@ -690,8 +734,13 @@ def _reader_loop(cv2, key, stream):
             ok, frame = False, None
             print(f"[CameraReader:{key}] 読取例外 {type(exc).__name__}: {exc}")
         if ok and frame is not None:
+            # **ここで必ずコピーする。** OpenCV/FFmpeg が返す配列は内部バッファを
+            # 参照しているだけで、次の read() で再利用・解放される。スレッドが
+            # 読み進めた後に別スレッドが触ると use-after-free になり、
+            # Pythonのトレースバック無しでプロセスごと落ちる
+            # (実測: Windows イベントログ 0xc0000374 = heap corruption, ntdll.dll)。
             with stream["frame_lock"]:
-                stream["frame"] = frame
+                stream["frame"] = frame.copy()
                 stream["seq"] += 1
                 stream["ts"] = time.monotonic()
             continue
@@ -846,7 +895,8 @@ def read_frame(index):
     with stream["lock"]:
         ok, frame = stream["cap"].read()
         if ok and frame is not None:
-            return frame
+            # 上と同じ理由でコピーして渡す(USBでも「読み進めた後に触る」事故を防ぐ)
+            return frame.copy()
     return None
 
 

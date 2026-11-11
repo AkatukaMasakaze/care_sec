@@ -1,0 +1,42 @@
+# --- Python / Django ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.mypy_cache/
+.pytest_cache/
+venv/
+.venv/
+env/
+
+# --- ローカル実行の状態(コミットしない) ---
+*.log
+*.lock
+.ai_always_on.lock
+
+# --- データベース(利用者・介護士・異常検知の実データを含む) ---
+db.sqlite3
+db.sqlite3-shm
+db.sqlite3-wal
+*.sqlite3
+
+# --- 実カメラの実写(顔・居室が写る。施設運用では絶対に公開しない) ---
+media/
+
+# --- 再学習の実行生成物 ---
+train_data/
+train_dataset/
+
+# --- 集約した静的ファイル(collectstatic の出力) ---
+staticfiles/
+static/admin/
+
+# ---  archives / バイナリの塊 ---
+*.zip
+*.7z
+*.pkl
+
+# --- OS / エディタ ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

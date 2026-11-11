@@ -448,6 +448,23 @@ pi-cam1.service の ExecStart:
 **Pi側のファイルはリポジトリに置かない**(運用指示)。`picam_stream.py` は
 `/usr/local/bin/` に、unit は `/etc/systemd/system/pi-cam1.service` にある。
 
+### Piに2台のカメラを載せる運用(2026-11-11 実測)
+
+| ポート | 機器 | 手段 | 備考 |
+|---|---|---|---|
+| 8080 | CSI Camera Module v2 (imx219) | `picam_stream.py` + `rpicam-vid` (libcamera) | mode `1640:1232:10:P`(全画幅binning。640x480 mode は中央クロップで画角が狭い) |
+| 8081 | USB Logitech C270 | `ustreamer --format=MJPEG --encoder=HW` | UVC自前のMJPEGをパススルーするので **CPUほぼ0**。`pi-cam2.service` |
+
+- **`/dev/videoN` を書かない**。機器を増やすと index が総入れ替えされる(C270 を足したら CSI が
+  video0 → video2 になった)。USBは `/dev/v4l/by-id/usb-046d_C270_HD_WEBCAM_…-video-index0`、
+  CSIは libcamera が DT の entity で探すため影響なし
+- ai2 側は台帳 `Camera.stream_url` に各ポートを入れるだけ。常時稼働が自動で両方を解析する
+- 実測: cam:9 = 26.5〜28fps / cam:10 = 25〜28fps、**両方とも 映像の遅延 0.00〜0.04秒**、
+  Pi の Send-Q は 20〜54KB、Pi 負荷 load 1.24(4コア)
+
+**注意**: `/debug/camera/` の一括カードは「そのカメラの解析が `running` になってから接続」する。
+未接続のカードは理由を表示する(`AIモデル準備中…` など)。
+
 **映像が横向き/逆さまなとき**: カメラの取付向きに合わせて
 `--rotation 90|180|270`(または `--hflip 1` / `--vflip 1`)を `ExecStart` の
 `rpicam-vid` 引数へ足す(`picam_stream.py` の `build_command`)。

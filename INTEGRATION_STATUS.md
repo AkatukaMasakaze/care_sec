@@ -1059,3 +1059,257 @@ ai2 側            cam:9 running 27.8fps / 映像の遅延 0.03秒 / カード�
 テスト中に撮った画像が**90度横向き**だった。ただしその瞬間は手でカメラを掴んでいる写りなので、
 **設置し直した向きで確認**が必要。横向きのままなら `ExecStart` の rpicam-vid 引数へ
 `--rotation 90|180|270`(または `--hflip 1` / `--vflip 1`)を追加する。
+
+---
+
+## 26. 2026-11-11 Piへの運用アクセス(SSH)と自己回復の実測
+
+### 障害になったもの
+GitHub 用の手順で `~/.ssh/id_ed25519` が**再生成**され、Pi の `authorized_keys` と不一致になった。
+さらに新しい秘密鍵は**パスフレーズで暗号化**されており、`ssh-agent` が `Stopped/Disabled` だった
+ため、非対話接続(`BatchMode=yes`)が鍵を復号できなかった。
+
+```
+Load key "C:\Users\student\.ssh\id_ed25519": incorrect passphrase supplied to decrypt private key
+student@10.24.23.232: Permission denied (publickey,password)
+```
+
+**Pi側は無傷だった**(authorized_keys を疑う前にこちらを確定させた):
+```
+/home/student          drwx------   ← StrictModes 適合
+/home/student/.ssh     drwx------
+~/.ssh/authorized_keys -rw-------   2行・末尾 \n(\r なし)
+```
+
+### 復旧手順(実施済み)
+```powershell
+# 1) 鍵あきを自動起動にし、パスフレーズで解いた鍵を常駐させる(管理者PowerShellで1回)
+Set-Service ssh-agent -StartupType Automatic
+Start-Service ssh-agent
+ssh-add $env:USERPROFILE\.ssh\id_ed25519
+
+# 2) 新公開鍵を Pi へ登録(自分の端末でパスワード1回)
+ssh student@10.24.23.232 "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+```
+**注意**: `type ~/.ssh/id_ed25519.pub | ssh ... "cat >> authorized_keys"` は
+PowerShell が **CRLF の `\r` を挟む**ため事故る。Pi側で `echo 'ssh-ed25519 AAAA...' >> ~/.ssh/authorized_keys`
+と直接書くか、`tr -d '\r'` で除去する。
+
+### Pi側に置いた運用許可(私が単独でメンテできるように)
+```
+/etc/sudoers.d/pi-cam1:
+  student ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart pi-cam1.service, /usr/bin/systemctl stop pi-cam1.service
+/usr/local/bin/picam_stream.py : 所有を student へ変更(sudo なしで更新できる)
+```
+範囲は **pi-cam1 の stop/restart とそのスクリプトだけ**(`visudo -c` で parsed OK 確認済み)。
+`reboot` は入れていないので、リブートは人の操作が必要。
+
+### 自己回復の実測(第25章の構成への検証)
+```
+rpicam-vid pid=3518 を kill
+  10:46:57  [picam] rpicam-vid 終了
+  10:46:59  [picam] rpicam-vid 起動 pid=3538      ← 2秒で復帰、配信は途切れない
+/state    online:true  captured_fps:30  frame_age:0.003  restarts:1
+```
+`restarts` は rpicam-vid の**終了ごとに増える**(旧版はプロセス終了経路を数えていなかった)。
+
+### リブート試験(実施・合格)
+`sudo -n reboot` で再起動し、人の操作なしで復帰するかを時系列で計測した。
+
+```
+送信 10:49:10
+  +61s  ping 応答
+  +65s  8080 TCP 受付
+  +75s  /state online:true captured_fps:30   ← 完全復帰
+```
+
+復帰後の実測(`up 1 minute`、`pi-cam1 = active`、`restarts:0`):
+```
+/state            frame_age 0.022〜0.032秒
+PC側 OpenCV 読取  isOpened 0.03s / 30.1fps / 初フレーム 0.04s
+クライアント接続中も frame_age 0.03秒(=行列を作らない設計が再起動後も有効)
+```
+→ **電源断・再起動に対して運用可能**。`enabled` + `WantedBy=multi-user.target` + `Restart=always`
+の組み合わせで、rpicam-vid の落ち込みも 2秒で自己回復する(上記の実測)。
+
+### まだ残っている確認
+- カメラの**設置向き**(横向きなら `ExecStart` の rpicam-vid 引数へ `--rotation 90` を追加)
+
+---
+
+## 27. 2026-11-11 PiにUSBカメラを追加 → 2台同時配信・同時解析
+
+ユーザー: 「ラズベリーパイにUSBカメラを追加した。2台搭載になった。できれば両方カメラデータを飛ばせたらいい」
+
+### 「No signal」の真因がここで確定した
+追加した USB カメラ(**Logitech C270**、`lsusb` で `046d:0825`)が `/dev/video0` を奪い、
+CSI の unicam が `/dev/video2` へずれた。
+
+```
+C270 HD WEBCAM (usb-3f980000.usb-1.2): /dev/video0 /dev/video1
+unicam (platform:3f801000.csi):        /dev/video2
+```
+
+つまり **昨日 ustreamer が読んでいた `/dev/video0` は C270 のこと**(YUYV 640x480@30、色も正しい)。
+C270 が外れると `/dev/video0` が CSI の unicam にすり替わり、unicam は 640x480 を弾くので
+「No signal」になっていた。**第25章の「なぜ昨日は動いていたのか」の答えがこれ**
+(ustreamer の不具合ではなく、`/dev/videoN` の同一性が変わったことが原因)。
+
+### 配信の割り当て(2台・2ポート)
+| ポート | 機器 | 手段 | 理由 |
+|---|---|---|---|
+| **8080** | CSI imx219 | `picam_stream.py`(rpicam-vid / libcamera、mode `1640:1232:10:P`) | unicam raw では 640x480 と色が取れない |
+| **8081** | USB C270 | **ustreamer**(`--format=MJPEG --encoder=HW --desired-fps=30`) | UVC は自前 MJPEG を持つので **CPUほぼ無料(パススルー)** |
+
+`pi-cam2.service`(enabled / `Restart=always`)を追加。**device は必ず by-id パス**で指定した。
+
+```
+ExecStart=/usr/bin/ustreamer --device=/dev/v4l/by-id/usb-046d_C270_HD_WEBCAM_200901010001-video-index0 \
+  --resolution=640x480 --format=MJPEG --encoder=HW --desired-fps=30 --port=8081 --host=0.0.0.0 --tcp-nodelay
+```
+`/dev/videoN` は機器構成で変わる(今回実際にずれた)ので **index 直書きは禁止**。
+libcamera 側(rpicam-vid)は DT の entity で探すため index 変更の影響を受けない(実測で無傷)。
+
+### ai2 側の登録と実測
+台帳に `Camera id=10 / Piカメラ USB(C270) / http://10.24.23.232:8081/stream` を登録
+(`http://…/state` を見て `online:true` を確認してから登録する手順にした)。
+
+```
+cam:9  (CSI)  running 26.5〜28.0fps  映像の遅延 0.00〜0.04秒
+cam:10 (USB)  running 25.0〜28.0fps  映像の遅延 0.00〜0.04秒
+Pi Send-Q     8080 = 20KB / 8081 = 54KB   (第21章の 2.45MB と比較にならない)
+Pi 負荷       load 1.24 / 4core、rpicam-vid 31%、ustreamer はほぼ0
+Pi メモリ     367MB / 904MB
+```
+`/debug/camera/` の一括カードで **2台が同時配信**され、overlay 経由のフレームも両方取得できた。
+
+### 私が今回入れたバグと修正(重要)
+第23章で「検知完了時に `/debug/camera/devices/` を引き直さない(再発走を防ぐ)」へ変えたが、
+**IPカメラのマージはビュー側にしか無かった**ため、完了時にブラウザが受け取る
+`/debug/camera/progress/` の一覧から cam:9 / cam:10 が消え、**カードが作られなくなった**(実測)。
+
+修正: マージ処理を `camera_service` へ寄せて両エンドポイントで共有した。
+- `network_devices()` … 台帳のIPカメラを一覧用dictに組み替える
+- `merged_devices(devices)` … USB検知結果とIP台帳を重複なしで結合
+- `detect_progress()` と `debug_camera_devices` の**両方**がこれを呼ぶ
+
+**教訓**: 同じ「一覧」を返す場所が2つあるなら、組み立ては1か所に寄せる。片方だけ直すと
+もう片方を使う経路が静かに壊れる。
+
+### 残っているもの
+- **CSIカメラ(cam:9)のレンズ前が塞がっている**(取得フレームが全面暗/ぼけ)。設置し直しが必要
+- **CSIの向き**未確認(横向きなら `picam_stream.py` の rpicam-vid 引数へ `--rotation 90`)
+- 視聴数が実数より多く出ることがある(ブラウザが離線したMJPEG接続の後始末が遅れる)。表示上の問題
+- PC内蔵カメラ(index 0)は `phase=error`(他アプリ占有の疑い)。Pi 2台とは無関係
+
+---
+
+## 28. 2026-11-11 「cam:9 の色がおかしい」→ カメラ故障ではないと確定
+
+ユーザー: 「cam9はレンズが塞がれたというより、色合いがおかしい。カメラ側の問題か?」
+
+### 切り分け(配信処理のせいか、カメラ/シーンのせいか)
+同じ `--mode 1640:1232:10:P` で3経路を5秒差で比較した。
+
+| 経路 | 輝度 | B-R | ラプラシアン分散(鮮明度) |
+|---|---|---|---|
+| 私の配信(:8080 /stream) | 84.6 | **-4.1** | 126.9 |
+| `rpicam-still`(静止画) | 81.0 | **-3.7** | 137.1 |
+| `rpicam-vid` 直接(動画) | 61.3 | **-1.9** | 115.7 |
+
+→ **3経路がほぼ同じ値**。配信サーバ(`picam_stream.py`)もai2のoverlayも色を変えていない。
+ustreamer側(USB C270)は B-R -0.3 で中立。
+
+### rpicam の設定を9通り振って確認(天井向きのまま)
+| 設定 | 輝度 | B-R | 判定 |
+|---|---|---|---|
+| auto(既定) | 101.5 | -5.2 | 基準 |
+| `--awb fluorescent` | 101.8 | -4.3 | ほぼ変化なし(AWBは既に近似値を選んでいる) |
+| `--awb indoor` | 101.5 | -4.8 | 変化なし |
+| `--awb daylight` | 103.2 | **-49.3** | 悪化 |
+| `--awbgains 1.6,1.1` | 97.0 | **-78.9** | 大幅に悪化(ゲインの向きが逆) |
+| `--ev 0.5` / `--ev 1.0` | 138 / 174 | -6.8 / -7.0 | 明るくなるだけ(色比は不変) |
+| `--saturation 1.6` | 100.8 | -9.0 | 悪化 |
+| `--contrast 1.2` | 94.9 | -5.9 | 変化なし |
+
+→ **B-R ≈ -5/255(約2%)は寒色LED照明のオフィスでは正常域**。設定で改善しないことも確認した。
+
+### 本当の原因
+そのとき CSI モジュールは**天井を向いていた**(換気口・LED照明・モニター端が画面を占有)。
+- 画面の大半が強い照明+白い天井 → 露出とAWBがそれに引っ張られ、他が濁って見える
+- さらに**人/物がレンズ直前に来た**時間帯は全面暗+青く見えた(=最初に「塞がれている」と誤解した画)
+- 現在の画は**ピントは合っている**(天井の目地がシャープ)。ただし Camera Module v2(imx219)は
+  **焦点固定**なので、近接被写体は構造的にボケる
+
+### 参考: 2台の実力差(鮮明度)
+```
+USB C270 : 939.7   (オートフォーカス+明るいレンズ)
+CSI imx219: 115〜172 (焦点固定)
+```
+→ 転倒検知の主カメラは **C270(cam:10)** が有利。CSI(cam:9)は入口/廊下の固定監視に向く。
+
+### 対処
+1. **CSIの向きを整える**(部屋 or 入口方向)。色はそれで落ち着く
+2. 設定で色をどうにかする必要は**ない**(上記の実測で効果なし)
+3. 3台同時稼働時のfpsは index0 19〜23 / cam:10 22〜24 / cam:9 26〜27 に落ちた(CPU占有)。
+   **遅延は 0.01〜0.04秒のまま**なので検知には影響なし(第21章の設計どおり)
+
+---
+
+## 29. 2026-11-11 プロセスがトレースバック無しで落ちる(ヒープ破損)を修正
+
+ai2 が「何も出力せず死ぬ」ことがあり、Windowsイベントログを確認した。
+
+```
+2026-11-10 12:04:26  Application Error  python.exe  例外コード 0xc0000374  ntdll.dll
+2026-11-11 10:51:13  Application Error  python.exe  例外コード 0xc0000374  ntdll.dll
+                     (0xc0000374 = STATUS_HEAP_CORRUPTION)
+```
+
+**帰属は正しく分けておく**(過剰に結論しない):
+
+| 事象 | 判定 |
+|---|---|
+| 11/10 12:04 のヒープ破損 | **本物のクラッシュ**。当時のコードは下記の aliasing 問題を持っていた |
+| 11/11 10:51 のヒープ破損 | 私が `Stop-Process` で殺した**直後**の時刻。落とす最中に native スレッドが壊した可能性が高く、自発クラッシュとは限らない |
+| 11/11 11:49 の停止 | **Application Error イベント無し** = クラッシュではなく外部終了(シェル側の記録消失と同時)。今回の修正とは無関係 |
+
+### 実在したバグ(修正した)
+`cv2.VideoCapture.read()` が返す配列は**内部バッファを参照しているだけ**で、
+次の `read()` で再利用・解放される(OpenCVの既知の約束事: 「次に読むまでしか有効でない」)。
+
+第21章で入れた専有読取スレッドは、その配列をスロットに**そのまま**保存し、
+解析スレッドが**後から** `frame.copy()` して overlay を描画していた。
+読取スレッドが先に読み進めると、解析スレッドが触るのは**解放済み/再利用済みのメモリ**
+→ use-after-free → ヒープ破損。11/10 のクラッシュと整合する。
+
+同じ危険はUSB側にもあった(`_loop` が `cap.read()` の配列へ overlay を in-place 描画)。
+
+### 修正(`core/camera_service.py`)
+| 場所 | 内容 |
+|---|---|
+| `_reader_loop` | `stream["frame"] = frame.copy()` — **読んだ直後にコピー**してスロットへ置く |
+| `_acquire_network` | 初フレームも `frame.copy()` で保存 |
+| `read_frame`(USB側) | `return frame.copy()` — 呼び出し側が後で描画・保存しても安全 |
+
+代价は 1枚あたりコピー2回(640x480x3 ≒ 0.3ms × 2 × 30fps ≒ 1.8%/core)で、実測fpsは変らなかった。
+
+### 修正後の稼働確認(3台同時)
+```
+ 0s  index0 error(起動直後)  cam:10 error(起動直後)  cam:9 running 27.6fps age 0.03
+15s  index0 running 25.2     cam:10 running 24.9      cam:9  running 24.7 age 0.03
+30s  index0 running 26.3     cam:10 running 18.1      cam:9  running 21.9 age 0.03
+45s  index0 running 24.9     cam:10 running 18.4      cam:9  running 25.4 age 0.03
+```
+**注意**: 起動直後の1巡目は `error`(1フレームも取れない)が出ることがあり、**15〜30秒で自動復帰**する。
+常時稼働は1台ずつ順に開くため、USBカメラが落ち着くまでの一時的な状態。クラッシュと見間違えないこと。
+
+### 再発時の確認手順
+```powershell
+Get-WinEvent -FilterHashtable @{LogName='Application'; Level=2} -MaxEvents 60 |
+  Where-Object { $_.Message -match 'python' } |
+  Select-Object TimeCreated, ProviderName, @{n='msg';e={ ($_.Message -split "`n")[0..4] -join ' | ' }}
+```
+- `0xc0000374` = ヒープ破損(native のメモリ所有権の問題。OpenCV/Driver周りを疑う)
+- `0xc0000005` = アクセス違反
+- **イベントが無いのに止まっている**なら、クラッシュではなく外部終了(シェル/OS/手動停止)

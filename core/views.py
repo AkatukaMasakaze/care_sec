@@ -410,31 +410,9 @@ def debug_camera_devices(request):
     force = request.GET.get("force") == "1"
     result = camera_service.detect_devices(force=force)
 
-    from pathlib import Path as _Path
-
-    snapshot_dir = _Path(django_settings.MEDIA_ROOT) / "camera_snapshots"
-    media_url = django_settings.MEDIA_URL or "/media/"
-    extra = []
-    for source in camera_service.network_sources():
-        thumb = snapshot_dir / camera_service.snapshot_name(source["key"])
-        extra.append({
-            "index": source["key"],
-            "key": source["key"],
-            "kind": "ip",
-            "name": source["name"],
-            "location": source["location"],
-            "url": source["url"],
-            "width": None,
-            "height": None,
-            "backend": "IP",
-            "available": True,
-            "in_use": source["key"] in camera_service.stream_keys(),
-            "snapshot_url": (
-                f"{media_url}camera_snapshots/{thumb.name}?t={int(thumb.stat().st_mtime)}"
-                if thumb.exists() else None
-            ),
-        })
-    result["devices"] = list(result.get("devices", [])) + extra
+    # IPカメラ(台帳)とのマージは camera_service に一本化してある
+    # (progress 側と同じ組み立てでないと、検知完了後の一覧からIPカメラが消える)
+    result["devices"] = camera_service.merged_devices(result.get("devices", []))
     return JsonResponse(result)
 
 
