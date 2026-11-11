@@ -1,0 +1,53 @@
+{
+  "fingerprint": "73d834dcedc96b35",
+  "data_files": 39,
+  "started_at": "2026-11-09 11:00:43",
+  "forced": true,
+  "fall": {
+    "sequences": 2288,
+    "normal": 1912,
+    "fall": 376,
+    "skipped": 0,
+    "threshold": 0.77,
+    "val_accuracy": 0.8341,
+    "baseline": {
+      "threshold": 0.77,
+      "accuracy": 0.9694,
+      "false_positive_rate": 0.0026,
+      "miss_rate": 0.1733,
+      "counts": {
+        "tn": 382,
+        "fp": 1,
+        "fn": 13,
+        "tp": 62
+      }
+    },
+    "candidate": {
+      "threshold": 0.77,
+      "accuracy": 0.8843,
+      "false_positive_rate": 0.0026,
+      "miss_rate": 0.6933,
+      "counts": {
+        "tn": 382,
+        "fp": 1,
+        "fn": 52,
+        "tp": 23
+      }
+    },
+    "promoted": false,
+    "backup": null
+  },
+  "state": {
+    "sequences": 301,
+    "classes": 8,
+    "skipped": 8,
+    "val_accuracy": 0.1475,
+    "baseline_accuracy": 0.7213,
+    "candidate_accuracy": 0.1475,
+    "promoted": false,
+    "backup": null
+  },
+  "elapsed_seconds": 14.5,
+  "finished_at": "2026-11-09 11:00:58",
+  "last_fingerprint": "73d834dcedc96b35"
+}

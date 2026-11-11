@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+
+{% block title %}ログアウト{% endblock %}
+
+{% block content %}
+<div class="center-card">
+  <div class="card">
+    <h1>ログアウトしました</h1>
+    <p class="muted">CARE SEC 転倒・異常検知システムからログアウトしました。</p>
+    <a href="{% url 'login' %}" class="btn btn--primary">再ログイン</a>
+  </div>
+</div>
+{% endblock %}

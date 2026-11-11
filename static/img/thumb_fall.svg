@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="180" viewBox="0 0 300 180">
+  <rect width="300" height="180" fill="#101418"/>
+  <g stroke="#233041" stroke-width="1">
+    <path d="M0 45 H300 M0 90 H300 M0 135 H300 M75 0 V180 M150 0 V180 M225 0 V180"/>
+  </g>
+  <circle cx="150" cy="70" r="16" fill="none" stroke="#d93025" stroke-width="3"/>
+  <path d="M150 86 L138 130 M150 86 L164 128 M150 100 L132 112 M150 100 L168 110" stroke="#d93025" stroke-width="3" fill="none"/>
+  <rect x="118" y="42" width="66" height="96" fill="none" stroke="#d93025" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="10" y="170" fill="#d93025" font-size="14" font-family="sans-serif" font-weight="bold">FALL DETECTED</text>
+</svg>

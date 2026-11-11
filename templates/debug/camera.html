@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}カメラデバッグ{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>カメラデバッグ</h1>
+  <p class="page-header__sub">実カメラ環境のテスト用ページ(デモデータとは独立 / 今後AI認識モデルを接続予定)</p>
+  <p class="page-clock">
+    <span class="page-clock__date" id="page-date">----/--/--</span>
+    <span class="page-clock__time" id="page-time">--:--:--</span>
+    <span class="page-header__sub" id="page-tz"></span>
+  </p>
+</div>
+
+{# ===== デバイス検知 ===== #}
+<section class="card"
+         id="debug-camera"
+         data-devices-url="{% url 'debug_camera_devices' %}"
+         data-progress-url="{% url 'debug_camera_detect_progress' %}">
+  <div class="card__header">
+    <h2>カメラデバイス(サーバーマシン接続)</h2>
+    <button type="button" class="btn btn--ghost btn--sm" id="device-refresh">再検知</button>
+  </div>
+  <p class="muted" id="device-status">デバイスを検知しています…</p>
+  <div class="detect-progress" id="detect-progress" hidden>
+    <div class="detect-progress__track">
+      <div class="detect-progress__bar" id="detect-progress-bar"></div>
+    </div>
+    <div class="detect-progress__meta">
+      <span id="detect-progress-label">検知を準備しています…</span>
+      <span id="detect-progress-percent"></span>
+    </div>
+  </div>
+  <ul class="debug-device-list" id="device-list" hidden></ul>
+  <p class="muted" id="device-empty" hidden>カメラデバイスが検知されませんでした。接続を確認して「再検知」を押してください。</p>
+  <p class="form-error-banner" id="device-error" hidden></p>
+</section>
+
+{# ===== リアルタイムAI解析(caregiver_safety モデル) ===== #}
+<section class="card"
+         id="ai-status"
+         data-ai-status-url="{% url 'debug_camera_ai_status' %}"
+         {% if not ai_enabled %}hidden{% endif %}>
+  <div class="card__header">
+    <h2>リアルタイムAI解析(転倒・状態判定)</h2>
+    <span class="chip" id="ai-chip">待機中</span>
+  </div>
+  <p class="muted ai-status-note">
+    「表示開始」すると骨格・判定overlayを描画した映像が配信され、異常は
+    <a href="{% url 'alert_list' %}">異常検知</a> に通知されます(通知音・トースト・OS通知)。
+    {% if ai_always_on %}このサーバーは<strong>全カメラを常時解析</strong>しています。ページを開いていない時・映像を「停止」中も異常検知と録画は走り続けます(下の表は各カメラの稼働状況)。{% endif %}
+  </p>
+  <div class="ai-status-grid">
+    <div class="ai-status-item">
+      <span class="ai-status-item__label">状態</span>
+      <span class="ai-status-item__value" id="ai-state">-</span>
+    </div>
+    <div class="ai-status-item">
+      <span class="ai-status-item__label">判定</span>
+      <span class="ai-status-item__value" id="ai-judge">-</span>
+    </div>
+    <div class="ai-status-item">
+      <span class="ai-status-item__label">危険度</span>
+      <span class="ai-status-item__value" id="ai-danger">-</span>
+    </div>
+    <div class="ai-status-item">
+      <span class="ai-status-item__label">足の位置</span>
+      <span class="ai-status-item__value" id="ai-foot">-</span>
+    </div>
+    <div class="ai-status-item">
+      <span class="ai-status-item__label">無動作</span>
+      <span class="ai-status-item__value" id="ai-still">-</span>
+    </div>
+    <div class="ai-status-item">
+      <span class="ai-status-item__label">解析フレーム</span>
+      <span class="ai-status-item__value" id="ai-frames">-</span>
+    </div>
+    <div class="ai-status-item">
+      <span class="ai-status-item__label">解析fps</span>
+      <span class="ai-status-item__value" id="ai-fps">-</span>
+    </div>
+    <div class="ai-status-item">
+      <span class="ai-status-item__label">映像の遅延</span>
+      <span class="ai-status-item__value" id="ai-delay">-</span>
+    </div>
+    <div class="ai-status-item">
+      <span class="ai-status-item__label">自動録画</span>
+      <span class="ai-status-item__value" id="ai-recording">-</span>
+    </div>
+  </div>
+  <p class="form-error-banner" id="ai-error" hidden></p>
+  <p class="muted ai-status-note" id="ai-last-alert" hidden></p>
+
+  <div class="card__header card__header--sub">
+    <h3>全カメラの稼働状況</h3>
+  </div>
+  <table class="ai-devices" id="ai-devices" hidden>
+    <thead>
+      <tr><th>index</th><th>状態</th><th>判定</th><th>解析fps</th><th>映像の遅延</th><th>無動作</th><th>視聴</th><th>稼働</th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+  <p class="muted ai-status-note" id="ai-devices-note" hidden></p>
+  <p class="muted ai-status-note" id="ai-retrain-note" hidden></p>
+</section>
+
+{# ===== 全カメラ一括ライブ表示 ===== #}
+<section class="card"
+         id="camera-grid-root"
+         data-stream-url="{% url 'debug_camera_stream' %}">
+  <div class="card__header">
+    <h2>全カメラライブ(一括表示)</h2>
+    <div class="demo-actions">
+      <span class="chip" id="grid-status">表示中</span>
+      <button type="button" class="btn btn--ghost btn--sm" id="grid-toggle">すべて停止</button>
+    </div>
+  </div>
+  <p class="muted ai-status-note">
+    検知した<strong>すべてのカメラを同時</strong>に配信します(1台ずつ切り替える必要はありません)。
+    各カードの右端が<strong>そのフレームが撮像された時刻(秒まで)</strong>、
+    左上の<span class="page-clock__time" style="font-size:13px">現在時刻</span>から引いた差分が
+    <strong>映像の遅延</strong>です。遅延が0.5秒を超えるとカードが黄色、1.5秒を超えると赤になります。
+    ※ MJPEGは1枚=1接続で、ブラウザは同一サーバーへ同時6接続まで。7台以上の場合は
+    「すべて停止」してから必要なカメラだけを表示してください。
+  </p>
+  <div class="camera-grid" id="camera-grid"></div>
+  <p class="muted" id="grid-empty" hidden>表示できるカメラがありません(検知中か、カメラが接続されていません)。</p>
+  <p class="form-error-banner" id="grid-error" hidden></p>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/debug_camera.js' %}?v={{ debug_asset_ver }}"></script>
+{% endblock %}

@@ -1,0 +1,27 @@
+# CARE SEC - Windows開発環境用（Python 3.13 / 実際のvenvと一致）
+asgiref==3.12.1
+Django==6.1.2
+sqlparse==0.6.0
+tzdata==2026.5
+
+# カメラデバッグ(/debug/camera/)のMJPEG配信
+# mediapipe が opencv-contrib-python を要求するため headless 版は使用しない
+opencv-contrib-python==5.0.0.93
+
+# リアルタイムAI解析(caregiver_safety の転倒・状態判定モデル)
+# ※ Linux本番(requirements.txt)は 2.20.0。2.21.0 はLinux用wheelが無いため。
+#    このWindows環境だけ 2.21.0 を使う、という意図した差分です。
+tensorflow==2.21.0
+mediapipe==0.10.32
+pillow==12.3.0
+
+# 異常検知からの自動録画(mp4 H.264書き出し、ffmpegバイナリ同梱)
+imageio-ffmpeg==0.8.1
+
+# AIモデルの再学習(追加学習)用パイプライン: manage.py ai_prepare_* / ai_train_* / ai_check_model
+pandas==3.1.1
+scikit-learn==1.9.1
+
+# 開発venvには調査用の py-spy==0.4.3 も入れている(プロセスのスタック確認用)。
+# アプリ動作には不要なので、本番デプロイ時には導入しないこと。
+#   導入する場合: pip install py-spy
