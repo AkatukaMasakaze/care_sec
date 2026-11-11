@@ -1,15 +1,15 @@
 {
-  "fingerprint": "73d834dcedc96b35",
+  "fingerprint": "eabc1bb65641709c",
   "data_files": 39,
-  "started_at": "2026-11-09 11:00:43",
-  "forced": true,
+  "started_at": "2026-11-11 11:22:24",
+  "forced": false,
   "fall": {
     "sequences": 2288,
     "normal": 1912,
     "fall": 376,
     "skipped": 0,
     "threshold": 0.77,
-    "val_accuracy": 0.8341,
+    "val_accuracy": 0.9803,
     "baseline": {
       "threshold": 0.77,
       "accuracy": 0.9694,
@@ -24,30 +24,30 @@
     },
     "candidate": {
       "threshold": 0.77,
-      "accuracy": 0.8843,
+      "accuracy": 0.9738,
       "false_positive_rate": 0.0026,
-      "miss_rate": 0.6933,
+      "miss_rate": 0.1467,
       "counts": {
         "tn": 382,
         "fp": 1,
-        "fn": 52,
-        "tp": 23
+        "fn": 11,
+        "tp": 64
       }
     },
-    "promoted": false,
-    "backup": null
+    "promoted": true,
+    "backup": "C:\\Users\\student\\Desktop\\実習\\卒業制作\\care_sec\\ai_models\\backup\\20261111-112438\\fall_detection_lstm.keras"
   },
   "state": {
     "sequences": 301,
     "classes": 8,
     "skipped": 8,
-    "val_accuracy": 0.1475,
+    "val_accuracy": 0.6557,
     "baseline_accuracy": 0.7213,
-    "candidate_accuracy": 0.1475,
+    "candidate_accuracy": 0.6557,
     "promoted": false,
     "backup": null
   },
-  "elapsed_seconds": 14.5,
-  "finished_at": "2026-11-09 11:00:58",
-  "last_fingerprint": "73d834dcedc96b35"
+  "elapsed_seconds": 146.2,
+  "finished_at": "2026-11-11 11:24:50",
+  "last_fingerprint": "eabc1bb65641709c"
 }
