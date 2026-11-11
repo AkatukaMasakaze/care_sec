@@ -94,6 +94,9 @@
   <h2>目次</h2>
   <ol>
     <li><a href="#about">この手順書について</a></li>
+    <li><a href="#update">0. 最新の進捗と修正点</a></li>
+    <li class="sub"><a href="#update-progress">進捗一覧</a></li>
+    <li class="sub"><a href="#update-fixes">修正点一覧(10件)</a></li>
     <li><a href="#survey">1. 現状調査の結果</a></li>
     <li><a href="#step0">STEP 0. 環境構築と起動</a></li>
     <li><a href="#step1">STEP 1. 共通レイアウト</a></li>
@@ -145,11 +148,10 @@
   </table>
   </div>
   <div class="note warn">
-    <strong>最初に確認してほしいこと</strong>
-    <code>INTEGRATION_STATUS.md</code> には <code>core/ai_engine.py</code>・<code>core/training.py</code>・<code>ai_models/</code> などを
-    実装・検証済みと書かれていますが、<strong>これらはリポジトリに含まれていません</strong>(別マシンの作業フォルダに残っていると思われます)。
-    そのファイル一式が手元にあるなら、アップロードするのが最短です。本書の STEP 7〜8 は、それが無い前提で
-    <strong>同等の機能を最小構成で作り直す手順</strong>です。
+    <strong>最初に確認してほしいこと(2026-11-11 更新)</strong>
+    初版(11/9)の時点では <code>core/ai_engine.py</code>・<code>core/training.py</code>・<code>ai_models/</code> がリポジトリに無く、
+    STEP 7〜8 はそれらを作り直す手順として書きました。<strong>11/11 にこれらがアップロードされ、実装済みになっています。</strong>
+    いま必要な作業は <a href="#update">0. 最新の進捗と修正点</a> にまとめています。まずそちらを読んでください。
   </div>
   <div class="note">
     <strong>サンプルコードの扱い</strong>
@@ -160,8 +162,284 @@
 </section>
 
 <!-- ============================================================ -->
+<section id="update">
+  <h2>0. 最新の進捗と修正点(2026-11-11 時点)</h2>
+  <p>
+    2026-11-11 にリモートの <code>main</code>(コミット <code>3c1dfe8</code>)を取り込み、実装状況を確認し直しました。
+    リアルタイムAIとカメラデバッグは実装済みになり、残りは<strong>下の修正点 10 件</strong>と未対応の STEP 2・4・8-5 です。
+    この章のサンプルは、修正 4・8・9 を除き、リポジトリのコピーに適用して動作を確認しています。
+  </p>
+
+  <h3 id="update-progress">進捗一覧</h3>
+  <div class="table-scroll">
+  <table>
+    <tr><th>STEP</th><th>内容</th><th>状況</th><th>残作業</th></tr>
+    <tr><td>0</td><td>環境設定</td><td><span class="badge ok">実装済</span></td><td><code>FACILITY_NAME</code> のみ未追加(STEP 4 で使用)</td></tr>
+    <tr><td>1</td><td>共通レイアウト</td><td><span class="badge ng">未実装</span></td><td><a href="#fix1">修正 1</a>・<a href="#fix2">2</a>・<a href="#fix5">5</a></td></tr>
+    <tr><td>2</td><td>ダッシュボードのカメラ生存表示</td><td><span class="badge ng">未実装</span></td><td><a href="#step2">STEP 2</a> のとおり</td></tr>
+    <tr><td>3</td><td>異常検知のサムネイル</td><td><span class="badge ok">実装済</span></td><td>-</td></tr>
+    <tr><td>4</td><td>プロフィールの所属施設</td><td><span class="badge warn">要修正</span></td><td><a href="#step4">STEP 4</a> のとおり(「さくら介護施設」固定)</td></tr>
+    <tr><td>5</td><td>設定画面</td><td><span class="badge warn">要修正</span></td><td><a href="#fix6">修正 6</a>・<a href="#fix7">7</a>・<a href="#fix10">10</a></td></tr>
+    <tr><td>6</td><td>録画ファイル配信</td><td><span class="badge ok">実装済</span></td><td><code>DEBUG=True</code> のときのみ配信。<a href="#fix4">修正 4</a></td></tr>
+    <tr><td>7</td><td>カメラデバッグ</td><td><span class="badge ok">実装済</span></td><td><a href="#fix7">修正 7</a>(権限)</td></tr>
+    <tr><td>8</td><td>リアルタイムAI</td><td><span class="badge ok">実装済</span></td><td>立ち入り禁止ゾーン(<a href="#step8-5">8-5</a>)のみ未実装</td></tr>
+  </table>
+  </div>
+  <div class="note">
+    <strong>構成が変わった点</strong>
+    デモ用シミュレーター(<code>core/ai_simulator.py</code>・<code>core/ai_monitor.py</code>)と <code>PersonDetection</code> モデルは削除され、
+    異常は実AI(<code>core/ai_engine.py</code>)の検知だけが登録します。IPカメラ対応と起動時の自動再学習(<code>core/retraining.py</code>)も追加されています。
+    そのため STEP 3・6・7・8 のサンプルは<strong>適用不要</strong>です(仕組みの解説として残しています)。
+  </div>
+
+  <h3 id="update-fixes">修正点一覧</h3>
+  <div class="table-scroll">
+  <table>
+    <tr><th>#</th><th>症状</th><th>場所</th><th>重要度</th></tr>
+    <tr><td><a href="#fix1">1</a></td><td>ログイン後に 404 になる</td><td><code>templates/accounts/login.html:30</code></td><td><span class="badge ng">動作不良</span></td></tr>
+    <tr><td><a href="#fix2">2</a></td><td>操作結果メッセージが表示されない</td><td><code>templates/base.html</code></td><td><span class="badge ng">動作不良</span></td></tr>
+    <tr><td><a href="#fix3">3</a></td><td>特定の IP でアクセスすると 400 になる</td><td><code>config/settings.py:28</code></td><td><span class="badge ng">動作不良</span></td></tr>
+    <tr><td><a href="#fix4">4</a></td><td>DB にある録画 7 件が再生できない</td><td><code>db.sqlite3</code> / <code>media/</code></td><td><span class="badge ng">動作不良</span></td></tr>
+    <tr><td><a href="#fix5">5</a></td><td>「AI監視 稼働中」が固定表示</td><td><code>templates/base.html</code></td><td><span class="badge warn">要修正</span></td></tr>
+    <tr><td><a href="#fix6">6</a></td><td>全削除しても録画ファイルが残る</td><td><code>core/views.py</code></td><td><span class="badge warn">要修正</span></td></tr>
+    <tr><td><a href="#fix7">7</a></td><td>管理者向け機能を一般職員が使える</td><td><code>core/views.py</code></td><td><span class="badge warn">要修正</span></td></tr>
+    <tr><td><a href="#fix8">8</a></td><td><code>.gitignore</code> 対象が追跡されたまま</td><td>Git</td><td><span class="badge warn">要修正</span></td></tr>
+    <tr><td><a href="#fix9">9</a></td><td>秘密情報がコミットされている</td><td><code>config/settings.py</code> ほか</td><td><span class="badge warn">要修正</span></td></tr>
+    <tr><td><a href="#fix10">10</a></td><td>設定画面のタイトルが二重</td><td><code>templates/accounts/settings.html:3</code></td><td><span class="badge opt">軽微</span></td></tr>
+  </table>
+  </div>
+
+  <h3 id="fix1">修正 1. ログイン後に 404 になる</h3>
+  <p>
+    ログインフォームの遷移先が <code>/dev/var6/</code> に固定されています。このパスはサブパス配信しているサーバーにしか無いため、
+    ローカルではログイン成功後に 404 になります。Django が渡す <code>next</code> をそのまま使います。
+  </p>
+  <figure class="code"><figcaption><span class="path">templates/accounts/login.html</span><span class="kind">29〜30行目を置き換え</span></figcaption>
+<pre><code><span class="c">{# next = ログイン前に開こうとしていたページ。Django の LoginView が自動で渡す #}</span>
+<span class="c">{# 空のときは settings.LOGIN_REDIRECT_URL(ダッシュボード)へ移動する #}</span>
+&lt;input type="hidden" name="next" value="{{ next }}"&gt;</code></pre></figure>
+  <p>サブパス(<code>/dev/var6/</code>)で配信するサーバー側の設定は <a href="#step1-3">STEP 1-3</a> を参照してください。</p>
+
+  <h3 id="fix2">修正 2. 操作結果メッセージが表示されない</h3>
+  <p>
+    <code>views.py</code> は「対応を担当しました」「誤検知として登録しました」などを Django の messages に入れていますが、
+    <code>base.html</code> に表示する場所がありません。<a href="#step1-1">STEP 1-1</a> のテンプレートと CSS をそのまま追加してください
+    (追加位置は <code>{% block content %}</code> の直前)。
+  </p>
+
+  <h3 id="fix3">修正 3. 特定の IP でアクセスすると 400 になる</h3>
+  <p><code>ALLOWED_HOSTS</code> の最後の値の先頭に空白が入っており、そのホスト名と一致しません。</p>
+  <figure class="code"><figcaption><span class="path">config/settings.py</span><span class="kind">28行目を修正</span></figcaption>
+<pre data-lang="python" data-check><code><span class="c"># 修正前: 最後の値が " 133.x.x.x" のように先頭に空白を含む → 一致せず 400 Bad Request になる</span>
+<span class="c"># 修正後: 空白を取り除く</span>
+<span class="c">#         (IPアドレスは実際の値のまま。ここでは伏せています)</span>
+ALLOWED_HOSTS = ["localhost", "127.0.0.1", "testserver", "153.x.x.x", "133.x.x.x"]</code></pre></figure>
+
+  <h3 id="fix4">修正 4. DB にある録画 7 件が再生できない</h3>
+  <p>
+    コミットされている <code>db.sqlite3</code> には録画と異常が各 7 件ありますが、動画の置き場所 <code>media/</code> は
+    <code>.gitignore</code> 対象で、リポジトリからも削除済みです。pull した人の環境では録画を開いても再生できません。
+    ファイルが無い録画の行を DB から消します(異常検知の記録は残ります)。
+  </p>
+  <figure class="code"><figcaption><span class="path">python manage.py shell</span><span class="kind">対話シェルに貼り付けて実行</span></figcaption>
+<pre data-lang="python" data-check><code>from pathlib import Path
+from django.conf import settings
+from core.models import Recording
+
+for rec in Recording.objects.all():
+<span class="c">    # video_url は "/media/recordings/xxx.mp4" の形 → MEDIA_ROOT からの相対パスに直す</span>
+    relative = rec.video_url.removeprefix(settings.MEDIA_URL)
+    if not (Path(settings.MEDIA_ROOT) / relative).exists():
+        print("削除:", rec.video_url)
+        rec.delete()          # 動画ファイルが無い録画だけ消す</code></pre></figure>
+  <p>根本対策は <a href="#fix8">修正 8</a>(DB をリポジトリに入れない)です。</p>
+
+  <h3 id="fix5">修正 5. 「AI監視 稼働中」が固定表示</h3>
+  <p>設定画面で AI を停止してもサイドバーは「稼働中」のままです。<code>AISettings.enabled</code> を全ページに渡して切り替えます。</p>
+  <figure class="code"><figcaption><span class="path">core/context_processors.py</span><span class="kind">import と alert_globals を修正</span></figcaption>
+<pre data-lang="python" data-check><code>from django.conf import settings
+
+from .models import AISettings, Alert
+
+
+def alert_globals(request):
+    if not request.user.is_authenticated:
+        return {}
+    open_alerts = Alert.objects.filter(status=Alert.Status.OPEN)
+    return {
+        "open_alert_count": open_alerts.count(),
+        "latest_open_alert": open_alerts.order_by("-occurred_at").first(),
+<span class="c">        # サイドバーの稼働表示用。</span>
+<span class="c">        # 「実AIを使う設定」かつ「設定画面でONにしている」ときだけ True</span>
+        "ai_monitor_enabled": (
+            bool(getattr(settings, "AI_REALTIME_ENABLED", True))
+            and AISettings.load().enabled
+        ),
+    }</code></pre></figure>
+  <figure class="code"><figcaption><span class="path">templates/base.html</span><span class="kind">sidebar__footer の中身を置き換え</span></figcaption>
+<pre><code>&lt;div class="sidebar__footer"&gt;
+<span class="c">  {# ai_monitor_enabled は context_processors.py から全ページに渡される #}</span>
+  {% if ai_monitor_enabled %}
+    AI監視 &lt;span class="status-dot status-dot--on"&gt;&lt;/span&gt; 稼働中
+  {% else %}
+    AI監視 &lt;span class="status-dot status-dot--off"&gt;&lt;/span&gt; 停止中
+  {% endif %}
+&lt;/div&gt;</code></pre></figure>
+  <p><code>asset_version</code> 関数はそのまま残してください(<a href="#step1-2">STEP 1-2</a> の「置き換え」サンプルは古い構成向けです)。</p>
+
+  <h3 id="fix6">修正 6. 全削除しても録画ファイルが残る</h3>
+  <p>
+    設定画面の「全異常・録画・解決報告を削除」は DB の行だけを消し、<code>media/recordings/</code> の mp4 と jpg が残ります。
+    居室の実写が残り続けるため、ファイルも消します。
+  </p>
+  <figure class="code"><figcaption><span class="path">core/views.py</span><span class="kind">import に追加し、関数を1つ追加</span></figcaption>
+<pre data-lang="python" data-check><code>from pathlib import Path   # ファイル冒頭の import に追加
+
+
+def _delete_recording_files():
+    """media/recordings/ の録画(mp4)とサムネイル(jpg)を消し、消した数を返す"""
+    rec_dir = Path(django_settings.MEDIA_ROOT) / "recordings"
+    removed = 0
+    if not rec_dir.is_dir():          # まだ1件も録画していない環境
+        return removed
+    for path in rec_dir.iterdir():
+        if path.is_file() and path.suffix.lower() in {".mp4", ".jpg"}:
+            try:
+                path.unlink()
+                removed += 1
+            except OSError:
+                pass                  # 書き出し中などで消せないファイルは飛ばす
+    return removed</code></pre></figure>
+  <figure class="code"><figcaption><span class="path">core/views.py</span><span class="kind">settings() の clear_all_data を置き換え</span></figcaption>
+<pre><code>    if action == "clear_all_data":
+<span class="c">        # 管理者以外は実行させない(修正 7)</span>
+        if not request.user.is_admin:
+            messages.error(request, "データ削除は管理者のみ実行できます。")
+            return redirect("settings")
+<span class="c">        # DBの行を消す(報告 → 録画 → 異常 の順)</span>
+        AlertReport.objects.all().delete()
+        Recording.objects.all().delete()
+        Alert.objects.all().delete()
+<span class="c">        # 録画ファイル本体も消す</span>
+        removed = _delete_recording_files()
+        messages.success(
+            request,
+            f"すべての検知データ・録画・解決報告を削除しました(録画ファイル {removed} 個)。",
+        )</code></pre></figure>
+  <p>
+    あわせて <code>templates/accounts/settings.html</code> の説明文から「人物検知履歴」を削ってください(その機能は削除済みです)。
+  </p>
+
+  <h3 id="fix7">修正 7. 管理者向け機能を一般職員が使える</h3>
+  <p>
+    カメラデバッグはメニューでは管理者にだけ表示されますが、URL を直接開くと一般職員(<code>staff1</code>)でも表示できました。
+    全データ削除も全ログインユーザーが実行できます。ビュー側で <code>is_admin</code> を確認します。
+  </p>
+  <figure class="code"><figcaption><span class="path">core/views.py</span><span class="kind">import に追加し、デコレーターを定義</span></figcaption>
+<pre data-lang="python" data-check><code>from functools import wraps
+from django.http import HttpResponseForbidden   # 既存の django.http の import 行に追加してもよい
+
+
+def admin_required(view):
+    """管理者(is_admin=True)だけに許可するデコレーター"""
+    @wraps(view)
+    @login_required                    # 未ログインならログイン画面へ
+    def wrapper(request, *args, **kwargs):
+        if not request.user.is_admin:  # ログイン済みでも一般職員は 403
+            return HttpResponseForbidden("この機能は管理者のみ利用できます")
+        return view(request, *args, **kwargs)
+    return wrapper</code></pre></figure>
+  <figure class="code"><figcaption><span class="path">core/views.py</span><span class="kind">カメラデバッグの5つのビューで @login_required を置き換え</span></figcaption>
+<pre><code><span class="c"># 対象: debug_camera / debug_camera_devices / debug_camera_detect_progress</span>
+<span class="c">#       debug_camera_ai_status / debug_camera_stream</span>
+@admin_required
+def debug_camera(request):
+    ...</code></pre></figure>
+  <figure class="code"><figcaption><span class="path">templates/accounts/settings.html</span><span class="kind">データ削除カードを管理者だけに表示</span></figcaption>
+<pre><code><span class="c">{# 一般職員には削除ボタン自体を見せない(ビュー側のチェックと二重にする) #}</span>
+{% if user.is_admin %}
+&lt;section class="card danger-card"&gt;
+  ...(既存の中身はそのまま)...
+&lt;/section&gt;
+{% endif %}</code></pre></figure>
+  <div class="note warn">
+    <strong>verify_pages への影響</strong>
+    <code>python manage.py verify_pages</code> は <code>staff1</code> で <code>/debug/camera/</code> を開くため、この修正後は 403 で失敗します。
+    カメラデバッグの2行だけ <code>admin</code> でログインし直して確認するように変更してください。
+  </div>
+
+  <h3 id="fix8">修正 8. <code>.gitignore</code> 対象が追跡されたまま</h3>
+  <p>
+    <code>.gitignore</code> に <code>db.sqlite3</code> と <code>__pycache__/</code> が書かれていますが、追加前にコミットされたファイルは追跡され続けます。
+    今も <code>db.sqlite3</code> と <code>.pyc</code> 32 個がコミット対象で、実データ入りの DB が push のたびに上書きされます。
+  </p>
+  <figure class="code"><figcaption><span class="path">PowerShell</span><span class="kind">追跡だけを外す(手元のファイルは消えない)</span></figcaption>
+<pre><code><span class="c"># --cached = Gitの管理対象から外すだけ。作業フォルダのファイルは残る</span>
+git rm --cached db.sqlite3
+git rm -r --cached __pycache__ config/__pycache__ core/__pycache__ core/management/__pycache__ core/management/commands/__pycache__ core/migrations/__pycache__
+
+git commit -m "DBとキャッシュを追跡対象から外す"
+git push</code></pre></figure>
+  <div class="note warn">
+    <strong>共同作業者への連絡が必要</strong>
+    このコミットを pull した人の <code>db.sqlite3</code> は<strong>削除されます</strong>。事前に各自でコピーを取ってもらうか、
+    pull 後に <code>python manage.py migrate</code> と <code>python manage.py seed_demo</code> で作り直してください。
+  </div>
+
+  <h3 id="fix9">修正 9. 秘密情報がコミットされている</h3>
+  <p>
+    <code>SECRET_KEY</code>・<code>DEBUG = True</code>・サーバーの IP アドレスが <code>config/settings.py</code> に、
+    DB 暗号化の鍵が <code>encrypt_db.py</code> に直接書かれています。環境変数から読む形に変えます。
+  </p>
+  <figure class="code"><figcaption><span class="path">config/settings.py</span><span class="kind">SECRET_KEY / DEBUG / ALLOWED_HOSTS を置き換え</span></figcaption>
+<pre data-lang="python" data-check><code>import os
+
+<span class="c"># 本番では環境変数 CARE_SEC_SECRET_KEY に長いランダム文字列を設定する。</span>
+<span class="c"># 未設定のとき(=開発PC)だけ、開発専用の値を使う</span>
+SECRET_KEY = os.environ.get("CARE_SEC_SECRET_KEY", "dev-only-not-for-production")
+
+<span class="c"># 本番では CARE_SEC_DEBUG=0 を設定する(未設定なら開発用に True)</span>
+DEBUG = os.environ.get("CARE_SEC_DEBUG", "1") == "1"
+
+<span class="c"># 本番のホスト名・IPは CARE_SEC_ALLOWED_HOSTS に「,」区切りで設定する</span>
+<span class="c">#   例: CARE_SEC_ALLOWED_HOSTS=example.jp,203.0.113.10</span>
+ALLOWED_HOSTS = ["localhost", "127.0.0.1", "testserver"] + [
+    host.strip()                      # 前後の空白を除く(修正 3 の再発防止)
+    for host in os.environ.get("CARE_SEC_ALLOWED_HOSTS", "").split(",")
+    if host.strip()
+]</code></pre></figure>
+  <ul>
+    <li>今の <code>SECRET_KEY</code> は Git の履歴に残るため、<strong>本番では新しい値を作り直して</strong>ください(<code>python -c "from django.core.management.utils import get_random_secret_key as g; print(g())"</code>)。</li>
+    <li><code>DEBUG = False</code> にすると Django は <code>/media/</code> を配信しなくなります。録画の配信は Web サーバー側で設定します(<a href="#appendix">付録 C</a>)。</li>
+    <li><code>encrypt_db.py</code> の <code>KEY</code> も同じ方法で環境変数に移してください。</li>
+  </ul>
+
+  <h3 id="fix10">修正 10. 設定画面のタイトルが二重</h3>
+  <p>ブラウザのタブに「設定｜CARE SEC 転倒・異常検知システム｜CARE SEC 転倒・異常検知システム」と表示されます。</p>
+  <figure class="code"><figcaption><span class="path">templates/accounts/settings.html</span><span class="kind">3行目を置き換え</span></figcaption>
+<pre><code><span class="c">{# サイト名は base.html が後ろに付けるので、ここはページ名だけにする #}</span>
+{% block title %}設定{% endblock %}</code></pre></figure>
+
+  <h3 id="update-verify">修正後の確認</h3>
+  <div class="table-scroll">
+  <table>
+    <tr><th>修正</th><th>確認方法</th><th>期待する結果</th></tr>
+    <tr><td>1</td><td>ログアウトして <code>/alerts/</code> を開き、ログインする</td><td>ログイン後に異常検知一覧が表示される</td></tr>
+    <tr><td>2</td><td>未対応の異常で「対応する」を押す</td><td>画面上部に「対応を担当しました」と出る</td></tr>
+    <tr><td>3</td><td>空白を直した IP アドレスで開く</td><td>400 にならずログイン画面が出る</td></tr>
+    <tr><td>5</td><td>設定画面で AI 監視を OFF にする</td><td>サイドバーが「停止中」に変わる</td></tr>
+    <tr><td>6</td><td>管理者で全削除を実行する</td><td><code>media/recordings/</code> が空になり、消した個数が表示される</td></tr>
+    <tr><td>7</td><td><code>staff1</code> で <code>/debug/camera/</code> を開く</td><td>403 になる(<code>admin</code> では表示される)</td></tr>
+  </table>
+  </div>
+</section>
+
 <section id="survey">
   <h2>1. 現状調査の結果</h2>
+  <div class="note">
+    <strong>この章は初版(2026-11-9)時点の調査です</strong>
+    最新の状況は <a href="#update">0. 最新の進捗と修正点</a> を参照してください。
+  </div>
 
   <h3>特に影響が大きい問題</h3>
   <ol>
@@ -516,6 +794,10 @@ sendOSNotification('CARE SEC - 異常検知', {
 <!-- ============================================================ -->
 <section id="step3">
   <h2>STEP 3. 異常検知(一覧・詳細)</h2>
+  <div class="note">
+    <strong>実装済み(2026-11-11 確認)</strong>
+    サムネイル用プロパティはリポジトリに入っています。この章のサンプルは適用不要です。
+  </div>
 
   <h3>3-1 検知時の実画像サムネイル <span class="badge ng">未実装</span></h3>
   <p>
@@ -663,6 +945,10 @@ def remove_recording_files():
 <!-- ============================================================ -->
 <section id="step6">
   <h2>STEP 6. 録画一覧・再生</h2>
+  <div class="note">
+    <strong>実装済み(2026-11-11 確認)</strong>
+    録画ファイルの配信設定はリポジトリに入っています。残作業は <a href="#fix4">修正 4</a> です。
+  </div>
   <p>
     画面・再生・検知マークジャンプは動いています。足りないのは「実際の録画ファイルを置く場所と配信」です
     (録画ファイルを作る処理は STEP 8-2)。STEP 0 で <code>MEDIA_ROOT</code> / <code>MEDIA_URL</code> を追加済みなので、配信の設定だけ行います。
@@ -689,6 +975,10 @@ urlpatterns += static("media/", document_root=settings.MEDIA_ROOT)</code></pre><
 <!-- ============================================================ -->
 <section id="step7">
   <h2>STEP 7. カメラデバッグ画面を開けるようにする</h2>
+  <div class="note">
+    <strong>実装済み(2026-11-11 確認)</strong>
+    カメラデバッグ画面は開けるようになっています。この章のサンプルは適用不要です。残作業は <a href="#fix7">修正 7</a> です。
+  </div>
   <p>この STEP が終わると、AI無しの状態で「デバイス検知(進行バー付き)→ 選択 → ライブ表示」が動きます。AIカードは STEP 8 まで非表示です。</p>
 
   <h3 id="step7-1">7-1 足りないURLとビューを追加 <span class="badge ng">未実装</span></h3>
@@ -915,6 +1205,10 @@ function stopProgress() {
 <!-- ============================================================ -->
 <section id="step8">
   <h2>STEP 8. リアルタイムAI(転倒・状態判定)</h2>
+  <div class="note">
+    <strong>実装済み(2026-11-11 確認)</strong>
+    リポジトリの <code>core/ai_engine.py</code> などが正です。この章は仕組みの解説として読んでください(サンプルで上書きしないこと)。未実装は 8-5 のみです。
+  </div>
   <p>カメラ映像から異常を検知し、アラートと録画を作る本体です。処理の流れは次のとおりです。</p>
   <div class="flow">
     <span>カメラ映像</span><i>→</i><span>MediaPipe Pose<br>(33点×x,y,z = 99値)</span><i>→</i>
