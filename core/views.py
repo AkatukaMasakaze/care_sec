@@ -17,6 +17,7 @@ from django.views.decorators.http import require_POST
 
 from . import camera_service
 from .ai_engine import ai_engine as realtime_ai
+from .demo_alerts import create_demo_alert
 from .models import AISettings, Alert, AlertReport, Camera, Recording, Resident
 
 
@@ -308,8 +309,22 @@ def settings(request):
         ai.save(update_fields=["enabled"])
         messages.success(request, "AI監視を停止しました。")
 
-    # ※ デモ用の「手動で異常検知を発生させる(manual_alert)」は削除しました。
-    #    異常は実AI(core/ai_engine.py)の検知のみが登録します。
+    elif action == "demo_alert":
+        # 異常検知デモ: ボタンを押したときだけランダムな異常検知を1件発生させる
+        # (自動生成はしません。実AIの検知とは別物の、検証/練習用の手動トリガー)
+        alert = create_demo_alert()
+        if alert is None:
+            messages.warning(
+                request,
+                "デモを発生させられませんでした。カメラが1台も登録されていません"
+                "(/admin/ で Camera を登録してください)。",
+            )
+        else:
+            messages.success(
+                request,
+                "異常検知デモを発生させました:%s / %s / 信頼度 %d%%"
+                % (alert.camera.name, alert.get_kind_display(), round(alert.confidence * 100)),
+            )
 
     return redirect("settings")
 

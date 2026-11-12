@@ -1402,3 +1402,56 @@ message: すべての検知データ・録画・解決報告と、media 内の�
 ### 反映にはサーバー再起動が必要
 `--noreload` で運用しているため、`core/views.py` の変更は**再起動するまで有効になりません**。
 
+---
+
+## 32. 2026-11-12 設定ページに「異常検知デモ」ボタンを再設置(手動のみ)
+
+ユーザー指示: 「設定ページに、やはり異常検知デモをつけたい。**ボタンを押すとランダムな異常検知が出る**ボタンを再設置して」
+
+### 第20章との関係(方針変更なので明記しておく)
+第20章で **デモで問題を発生する機構をすべて削除**したうちの、
+- **自動生成するもの**(`ai_simulator.py` / `ai_monitor.py` / 常時稼働の起動フック)は
+  **削除したまま** = 戻していません
+- **手動トリガーだけ**を再開しました。押さない限り1件も増えない
+
+### 実装
+| 場所 | 内容 |
+|---|---|
+| `core/demo_alerts.py`(新規) | `create_demo_alert(kind=None, camera=None)`。ランダムな `Alert` を1件作る。**スレッドもタイマーも持たない**(押されたときだけ動く純関数) |
+| `core/views.py` | `settings()` に action `demo_alert` を追加。成功時は「どのカメラ/哪种類/信頼度何%」をメッセージに出す |
+| `templates/accounts/settings.html` | 「異常検知デモ」カードに `🚨 デモの異常検知を1件発生させる` ボタン + 注意書き |
+
+生成する値:
+- 種類: `fall` / `suspicious` / `zone` からランダム
+- 信頼度: `0.70〜0.99`
+- `detected_state`: 種類に合わせて 転倒=`lying` / あやしい=`sitting|lying` / ゾーン=`standing`
+- `status=open`、`occurred_at = now - 0〜15秒`
+- カメラ: オンライン優先でランダム(無ければ任意、1台も無ければ警告メッセージ)
+- `thumbnail_url`: 実在する代替SVG(`thumb_fall.svg` / `thumb_suspicious.svg`、zoneは無し→🚨表示)
+
+**`Recording` は作らない**。実体のない mp4 をリンクして再生を壊さないため。
+一覧・詳細は `has_real_thumbnail` が False なので代替SVG/🚨側で描画されます。
+
+### 検証(`transaction.atomic()` + ロールバックで実DBに残していない)
+```
+HTTP 200 / message: 異常検知デモを発生させました:test-main-camera / 立ち入り禁止ゾーン / 信頼度 87%
+作成例: kind=zone 信頼度=0.87 状態=立っている status=open thumb=(なし)
+8回押した種類の内訳: {suspicious:3, zone:4, fall:1}          ← ランダムに分散
+/api/alerts/ : HTTP 200、返ってきた件数=8                    ← 5秒ポーリングで通知に乗る
+   ペイロード例: {"kind_label":"転倒","status":"open","status_label":"未対応","location":"temp"}
+GET /alerts/ /alerts/?status=open /alerts/<id>/ /recordings/  → すべて 200
+「対応する」POST → 302, status=responding, responder=admin     ← フローも実AIと同じ経路
+設定ページの描画: 「異常検知デモ」/ value="demo_alert" / 注意書き すべて有 ✓
+manage.py check / verify_pages → 全通過
+ロールバック後のアラート数: 0(実DBは無傷)
+```
+
+### 運用上の注意(UIにも書いた)
+デモのアラートでも「誤検知として報告」を押すと **`AISettings` の感度自動調整に反映**されます。
+練習で連打すると実運用の閾値が動くので、消すなら設定ページの「全削除」を使ってください。
+
+### 反映にはサーバー再起動が必要
+`--noreload` 運用のため、`core/views.py` / `core/demo_alerts.py` / テンプレートの変更は
+**再起動するまで有効になりません**(テンプレートは `runserver` でも再読込される場合が
+ありますが、ビューのコードは再起動が必要です)。
+

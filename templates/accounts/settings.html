@@ -81,6 +81,29 @@
     </script>
   </section>
 
+  {# ===== 異常検知デモ(ボタンを押したときだけ発生 / 自動生成はしません) ===== #}
+  <section class="card">
+    <div class="card__header">
+      <h2>異常検知デモ</h2>
+    </div>
+    <form method="post" action="{% url 'settings_action' %}">
+      {% csrf_token %}
+      <button type="submit" name="action" value="demo_alert" class="btn btn--primary btn--block">
+        🚨 デモの異常検知を1件発生させる
+      </button>
+      <p class="field__help">
+        押すと <strong>ランダムな異常検知を1件</strong>作成します
+        (種類: 転倒 / あやしい動き / 立ち入り禁止ゾーン、信頼度 70〜99%)。<br>
+        実AIの検知と同じ経路を通るので、<strong>約5秒以内の通知</strong>(トースト・通知音・OS通知)、
+        異常検知一覧・詳細、「対応する → 解決・報告を入力」の流れまで確認できます。<br>
+        自動では一切動きません(このボタンを押したときだけ)。録画は作られないため
+        サムネイルは代替画像になります。<br>
+        <strong>注意:</strong> デモのアラートで「誤検知として報告」を押すと
+        AI設定の感度が自動調整されます。練習で連打しないようご注意ください。
+      </p>
+    </form>
+  </section>
+
   {# ===== データ削除（管理） ===== #}
   <section class="card danger-card">
     <div class="card__header">
