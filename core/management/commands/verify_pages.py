@@ -25,7 +25,16 @@ class Command(BaseCommand):
         check("get", "/", 302, anon)  # 未ログインはログインへリダイレクト
 
         client = Client()
-        client.force_login(User.objects.get(username="staff1"))
+        # staff1 は運用で消されることがある(createsuperuser 運用)ので、いる人で検証する
+        user = (User.objects.filter(username="staff1").first()
+                or User.objects.filter(is_admin=True).order_by("id").first()
+                or User.objects.order_by("id").first())
+        if user is None:
+            raise CommandError(
+                "検証用のアカウントがありません。"
+                "`python manage.py createsuperuser` か `python manage.py seed_demo` で作成してください。")
+        client.force_login(user)
+        self.stdout.write(f"検証ユーザー: {user.username}")
         for url in [
             "/", "/alerts/", "/alerts/?status=open", "/alerts/?status=responding",
             "/alerts/?status=resolved", "/recordings/", "/recordings/?kind=fall",
@@ -44,8 +53,8 @@ class Command(BaseCommand):
             temp = Alert.objects.create(kind=Alert.Kind.FALL, camera=camera, occurred_at=timezone.now())
             check("post", f"/alerts/{temp.id}/respond/", 302, client)
             temp.refresh_from_db()
-            assert temp.status == Alert.Status.RESPONDING and temp.responder.username == "staff1", "対応するフロー失敗"
-            self.stdout.write("OK   対応するボタン -> 対応者=staff1 / 状態=対応中")
+            assert temp.status == Alert.Status.RESPONDING and temp.responder.username == user.username, "対応するフロー失敗"
+            self.stdout.write(f"OK   対応するボタン -> 対応者={user.username} / 状態=対応中")
 
             response = check("post", f"/alerts/{temp.id}/resolve/", 302, client)
             assert f"alert={temp.id}" in response.headers.get("Location", ""), "解決->報告入力への遷移失敗"
