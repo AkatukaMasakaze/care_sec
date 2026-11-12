@@ -1610,3 +1610,66 @@ readiness 鉤とエンドポイント / `purge_media_files` / `demo_alert` /
 - `MAILERS` のように**Djangoが知らない設定名は黙って無視**される。
   効いていないように見える設定は `hasattr(settings, ...)` と公式設定名で疑う
 
+---
+
+## 35. 2026-11-12 カメラ検知のindex総当たりをやめ、OS実台数から範囲を決めた
+
+ユーザー指示: 「カメラ検知のとき“○○に接続できません”というエラーが出る。**固定の数で検知するのではなく、事前にカメラデバイスを検知して数は動的に**してください」
+
+### 原因
+検知は `DEBUG_CAMERA_MAX_DEVICES = 4` に従い `index 0..4` を**総当たり**していました。
+このPCに実在するカメラは1台だけなので、存在しない index 1/2/3 を毎回開きに行き、
+
+```
+[  2.16s][camera][error] index 3: カメラを開けませんでした(未接続の可能性)
+[  2.27s][camera][error] index 2: カメラを開けませんでした(未接続の可能性)
+[  2.31s][camera][error] index 1: カメラを開けませんでした(未接続の可能性)
+```
+
+という**存在しないものへのエラー**が並びました(第33章のログで可視化されて初めて目立った)。
+加えて、存在しないindexを開こうとすると Windows で数十秒ハングすることがあり、
+それが溜まると配信中のカメラまで止まる(第23章)ので、コストも高かった。
+
+### 実装(`core/camera_service.py`)
+| 関数 | 役割 |
+|---|---|
+| `_enumerate_os_cameras()` | OS列挙から `(index順の名称, 実台数)`。**Windows** = PnP の Camera/Image クラス(PresentOnly)。**Linux** = `/sys/class/video4linux/videoN/name` から codec/isp/mem2mem 等を除外し、`.../device` の realpath で**同じ物理デバイスを1台に丸める**(UVCは capture+metadata の2ノードを持つ) |
+| `_probe_range(os_count)` | 検知するindex数を OS実台数で決める。`AUTO_RANGE=False`→固定値、OS列挙が0→上限値へフォールバック。根拠文字列も返す |
+| `_run_detection` | OS列挙を**1回だけ**実行して名称と範囲の両方に使う(PowerShell を2回叩かない)。進捗stageに根拠を出す(`カメラを確認しています…(OS検出 1台 → index 0..0 を確認)`)。準備ログにも `検知範囲: …` を記録 |
+
+新設定:
+| 設定 | 既定 | 内容 |
+|---|---|---|
+| `DEBUG_CAMERA_AUTO_RANGE` | `True` | OS実台数から検知範囲を決める |
+| `DEBUG_CAMERA_PROBE_EXTRA` | `0` | 採番ずれに備えて余分に探す数(保険) |
+| `DEBUG_CAMERA_MAX_DEVICES` | `8`(4→8) | 上限。6台以上載せるなら増やす |
+
+### 実測
+```
+OS列挙: 台数=1 名称=['Web Camera - HD']
+検知範囲: index 0..0  (OS検出 1台 → index 0..0 を確認)
+
+検知実行: running 0/2 → done 2/2   ← 以前は 0/5 で index 1..3 の失敗が並んだ
+結果 1台: index=0 ノートPC内蔵カメラ (Web Camera - HD)   ← NAME_MAP の名前も正しい
+準備ログ: [0.00s][detect] 検知範囲: OS検出 1台 → index 0..0 を確認
+
+フォールバック確認:
+  AUTO=False            → (8, '固定値(DEBUG_CAMERA_AUTO_RANGE=False)')
+  AUTO=True, 実台数1    → (1, 'OS検出 1台 → index 0..0 を確認')
+  OS列挙が使えない(0)   → (8, 'OS検知が使えないため上限 8 まで')
+```
+
+### 注意(台数とindexは別物)
+OS列挙は**台数**しか言いません。OpenCVのindex採番は列挙順と一致しないことが
+**ある**(第15章で名前が入れ替わった実測)。そこで、
+- 台数はOSから取る(総当たりしない)
+- **名前の対応は推測しない**(従来どおり `DEBUG_CAMERA_NAME_MAP` を優先)
+- 採番がずれて検知漏れが起きる環境は `DEBUG_CAMERA_PROBE_EXTRA` で保険をかける
+
+### 回帰確認
+```
+manage.py check / verify_pages → 全通過
+既存機能18項目の横断検査 → 失われている機能 0 件
+core/camera_service.py / config/settings.py 構文 OK
+```
+

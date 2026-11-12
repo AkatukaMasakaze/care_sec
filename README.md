@@ -170,6 +170,7 @@ python manage.py verify_pages        # 全ページ+「対応→解決→報告�
 | 映像の入出力 | `core/camera_service.py` のキャプチャを共有(カメラ毎に独立)。解析済みJPEGを `/debug/camera/stream/?device=N` が配信。**IPカメラは専有読取スレッドが最新1枚だけ保持**するので遅延が溜まらない(下記「IPカメラ」章) |
 | デバイス検知 | **非同期**(検知は別スレッド)。`/debug/camera/devices/` は待たずに `{"pending": true}` を返し、`/debug/camera/progress/` を400msポーリングして進行バー+既に分かったカメラを先に表示。**完了時は progress が返す最終一覧を使い、devices/ を引き直さない**(引き直すと検知が再発走する) |
 | 検知のハング抑制 | 存在しない/占有中の index を開くと Windows では約60秒ハングし、そのスレッドが溜まると**配信中のカメラまで映像が止まる**(実測)。そこで ①同じ index のプローブは生存中は再起動しない ②開けなかった index は `DEBUG_CAMERA_PROBE_RETRY_SECONDS`(既定120秒)再試行しない。③既に `camera_service` が掴んでいる index はプローブせず台帳情報で出す。「再検知」ボタンだけ抑止を解く |
+| 検知範囲はOS実台数から | index を固定本数(0..N)で総当たりせず、**OSのカメラ列挙(PnP / video4linux)で「接続中何台か」を取ってその台数分だけ**探す(`DEBUG_CAMERA_AUTO_RANGE`)。Linux では codec/ISP ノードを除外し、同じ物理デバイスの複数ノードは1台に丸める。OS列挙が使えない場合だけ上限値へフォールバック。根拠は準備ログにも出る(`検知範囲: OS検出 1台 → index 0..0 を確認`) |
 | モデル | `ai_models/`(caregiver_safety からコピー。詳細は `ai_models/README.md`)。Kerasモデルは全カメラ共有(推論はロックで直列化)、MediaPipe はスレッドセーフではないため **カメラごとに1個** 生成 |
 | 状態表示 | `/debug/camera/ai/` を1秒ポーリング(`static/js/debug_camera.js`)。**`?device=N` でそのカメラ**、無しは最も稼働中のカメラ+全カメラの要約。ページ下部に「全カメラの稼働状況」一覧 |
 | **全カメラ一括表示** | 「全カメラライブ(一括表示)」セクションが **検知した全カメラをカード形式で同時配信**(1台ずつ切り替える必要なし)。各カードに 判定/状態/解析fps/**遅延**/無動作/視聴 を出す。**接続するのは解析が `running` になったカメラだけ**(待機中のカメラへ先に接続すると初フレームまでHTTPがハングし、ブラウザの同一サーバー6接続上限を食う)。未接続のカードは理由を表示(「AIモデル準備中…」/「このカメラはまだ解析されていません」)。「すべて停止」で全接続をクローズ |
@@ -227,7 +228,10 @@ H.264 mp4 + サムネイルとして `media/recordings/` に書き出したう�
 | `AI_ALERT_CAMERA_ID` | `None` | アラート紐づけカメラ(未指定=自動作成) |
 | `DEBUG_CAMERA_NAME_MAP` | `{0: 内蔵…, 1: 外付け…}` | OpenCV index → 運用上のカメラ名(OS列挙順とindex順は一致しないため明示する) |
 | `DEBUG_CAMERA_PROBE_RETRY_SECONDS` | `120` | **開けなかったindexを再試行するまでの間隔**。存在しないindexを開くとWindowsで約60秒ハングし、それが溜まると配信中のカメラまで止まるため、短期間で何度も突かない(「再検知」ボタンは即解除) |
-| `DEBUG_CAMERA_MAX_DEVICES` / `DEBUG_CAMERA_CACHE_SECONDS` | `4` / `30` | 探索するindex範囲 / 検知結果キャッシュ |
+| `DEBUG_CAMERA_AUTO_RANGE` | `True` | **検知するindex範囲をOS実台数から自動で決める**。OSが「接続中1台」と言えば index 0 だけを探す。存在しないindexを突かないので「カメラを開けませんでした(未接続の可能性)」という**存在しないものへのエラーが並ばない**(実測: 1台のPCで index 1..3 が毎回失敗していた) |
+| `DEBUG_CAMERA_PROBE_EXTRA` | `0` | OS実台数に加えて余分に探すindex数。OpenCVの採番がOS列挙とずれる環境用の保険(大きくすると失敗ログが増える) |
+| `DEBUG_CAMERA_MAX_DEVICES` | `8` | 探索indexの**上限**(OS台数はこちらで頭打ち)。6台以上載せるなら増やす。`AUTO_RANGE=False` にするとこの数まで一律に探す従来動作 |
+| `DEBUG_CAMERA_CACHE_SECONDS` | `30` | 検知結果キャッシュ |
 | `AI_ALWAYS_ON` | `True` | 画面を開いていなくても常時解析するか(runserver起動時に自動開始) |
 | `AI_ALWAYS_DEVICES` | `None` | 常時稼働の対象index一覧(**None=検知できた全カメラを同時解析**) |
 | `AI_CAMERA_PRIORITY` | `None` | カメラを**開く順序=優先度**(index降順)。USB的に同時不可なPCで効く。例 `[0, 1]` で内蔵優先 |

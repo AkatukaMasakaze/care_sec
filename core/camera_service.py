@@ -8,6 +8,7 @@
 OpenCVが未導入でもアプリ自体は起動できるよう、cv2のimportは遅延させる。
 """
 import glob
+import os
 import platform
 import subprocess
 import threading
@@ -119,6 +120,84 @@ def _friendly_names_linux():
         except OSError:
             continue
     return names
+
+
+# /sys/class/video4linux に並ぶが「カメラではない」V4L2ノード(Raspberry Pi 等の
+# codec / ISP ノード。これを含めると10台以上と数えてしまい検知範囲が暴走する)
+NON_CAMERA_WORDS = ("codec", "isp", "mem2mem", "m2m", "scaler", "v4l2-test")
+
+
+def _enumerate_os_cameras():
+    """OS列挙から (index順の名称リスト, 実台数) を取る
+
+    検知する index 範囲を**固定値にしない**ための根拠。
+    OSが「接続中のカメラはN台」と言っているなら、OpenCVの index も 0..N-1 を
+    探せば足りる。存在しない index を突くと「カメラを開けませんでした(未接続の
+    可能性)」という**存在しないものへのエラー**が毎回並ぶ原因になる。
+
+    - Windows: PnP の Camera / Image クラス(PresentOnly = 接続中のみ)
+    - Linux  : /sys/class/video4linux/videoN/name。codec/ISPノードを除外し、
+               同じ物理デバイス(USB/CSI)の複数ノードは1台に丸める
+    - 列挙できない場合は ([], 0) → 呼び出し側が上限値へフォールバックする
+    """
+    if platform.system() == "Windows":
+        names = _os_camera_names()
+        return names, len(names)
+
+    names = {}
+    devices = {}
+    for path in sorted(glob.glob("/sys/class/video4linux/video*")):
+        suffix = path.rsplit("video", 1)[-1]
+        if not suffix.isdigit():
+            continue
+        try:
+            with open(f"{path}/name", encoding="utf-8", errors="replace") as fh:
+                name = fh.read().strip()
+        except OSError:
+            continue
+        low = name.lower()
+        if any(word in low for word in NON_CAMERA_WORDS):
+            continue
+        index = int(suffix)
+        names[index] = name
+        # 1台のカメラが capture + metadata の2ノードを持つことがあるので
+        # 親デバイス単位で数える
+        try:
+            devices[index] = os.path.realpath(os.path.join(path, "device"))
+        except OSError:
+            devices[index] = path
+    if not names:
+        return [], 0
+    count = len(set(devices.values()))
+    ordered = [names.get(i, "") for i in range(max(names) + 1)]
+    return ordered, count
+
+
+def os_camera_count():
+    """接続中のカメラ台数(OS情報)。取れなければ 0"""
+    _names, count = _enumerate_os_cameras()
+    return count
+
+
+def _probe_range(os_count=None):
+    """検知で探索する index 数と、その根拠を返す
+
+    既定は OS の実台数にあわせる(動的)。`DEBUG_CAMERA_AUTO_RANGE = False` にすると
+    従来の固定値(`DEBUG_CAMERA_MAX_DEVICES`)に戻せます。
+    `os_count` を渡すと OS列挙をやり直ししません(検知本体は1回で済ませたい)。
+    """
+    cap = _max_devices()
+    if not bool(getattr(settings, "DEBUG_CAMERA_AUTO_RANGE", True)):
+        return cap, "固定値(DEBUG_CAMERA_AUTO_RANGE=False)"
+
+    if os_count is None:
+        _names, os_count = _enumerate_os_cameras()
+    extra = max(0, int(getattr(settings, "DEBUG_CAMERA_PROBE_EXTRA", 0)))
+    if os_count <= 0:
+        # OSが列挙できない(権限・非Windows等)ときは従来どおり上限まで
+        return cap, "OS検知が使えないため上限 %d まで" % cap
+    total = min(max(os_count + extra, 1), cap)
+    return total, "OS検出 %d台 → index 0..%d を確認" % (os_count, total - 1)
 
 
 def _capture_info(cap, index, backend_name=None):
@@ -413,24 +492,27 @@ def _run_detection(cv2):
     """検知本体(バックグラウンドスレッド)"""
     global _detect_partial
 
-    max_devices = _max_devices()
     started = time.monotonic()
+    # OS列挙は1回だけ行う(PowerShell を2回叩かない)。検知範囲もこれを使う。
+    os_names, os_count = _enumerate_os_cameras()
+    max_devices, reason = _probe_range(os_count)
     total = max_devices + 1  # +1 = OS列挙(デバイス名)ステップ
     _set_progress(
         state="running",
-        stage="カメラを確認しています…",
+        stage="カメラを確認しています…(%s)" % reason,
         current=0,
         total=total,
         started_at=started,
         finished_at=None,
     )
+    try:
+        from . import readiness
 
-    # OSが認識しているカメラ名を先に取る(開けなくても「存在する」ことを示すため)
-    if platform.system() == "Windows":
-        os_names = _os_camera_names()
-    else:
-        linux_names = _friendly_names_linux()
-        os_names = [linux_names.get(i, "") for i in range(max_devices)]
+        readiness.note("detect", "検知範囲: %s" % reason)
+    except Exception:  # noqa: BLE001 -進捗ログ失敗で検知を止めない
+        pass
+
+    # (OS列挙は上で行った。os_names はデバイス名の付与に使う)
 
     devices = []
     for index in range(max_devices):

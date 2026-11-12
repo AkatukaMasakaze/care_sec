@@ -157,9 +157,19 @@ LOGIN_URL = "/accounts/login/"
 LOGIN_REDIRECT_URL = "/"
 LOGOUT_REDIRECT_URL = "/accounts/login/"
 
-# カメラデバッグ(/debug/camera/): サーバーマシンのカメラを何インデックスまで探索するか / 検知結果キャッシュ秒数
-DEBUG_CAMERA_MAX_DEVICES = 4
+# カメラデバッグ(/debug/camera/): 検知結果キャッシュ秒数
 DEBUG_CAMERA_CACHE_SECONDS = 30
+# 検知する index 範囲を **OSが認識しているカメラ台数から自動で決める**(既定 True)
+#   True  = OS列挙(PnP / video4linux)の実台数だけ探す。存在しない index を突かない
+#           ので「カメラを開けませんでした(未接続の可能性)」という存在しないものへの
+#           エラーが並ばない(実測: 1台しか無いPCで index 1..3 が毎回失敗していた)
+#   False = 下の DEBUG_CAMERA_MAX_DEVICES まで一律に探す(従来の挙動)
+DEBUG_CAMERA_AUTO_RANGE = True
+# OS実台数に加えて余分に探す index 数。OpenCVのindex採番がOS列挙とずれる環境用の
+# 保険(既定 0 = 余計な失敗を出さない)
+DEBUG_CAMERA_PROBE_EXTRA = 0
+# 探索する index の**上限**(OS台数こちらで頭打ち)。カメラを6台以上載せるなら増やす
+DEBUG_CAMERA_MAX_DEVICES = 8
 # 開けなかったインデックスを再試行するまでの間隔(秒)。
 # 存在しない/他アプリ占有のindexを開こうとすると Windows では数十秒ハングし、
 # そのスレッドが溜まると **既に配信中のカメラまで映像が止まる**(実測)ため、
