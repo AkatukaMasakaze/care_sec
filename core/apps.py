@@ -112,13 +112,18 @@ class CoreConfig(AppConfig):
             """
             import time
 
+            from . import readiness
             from .ai_engine import ai_engine
 
+            readiness.note("sys", "サーバー起動: 常時稼働の準備を始めます")
             retry_seconds = int(getattr(settings, "AI_ALWAYS_RETRY_SECONDS", 30))
             first = True
             time.sleep(2.0)
             if not CoreConfig._claim_ai_lock():
+                readiness.note("sys", "別のサーバープロセスがカメラを占有しているため、"
+                                      "このプロセスでは常時稼働を開始しません", "warn")
                 return
+            readiness.note("sys", "カメラ占有ロックを確保しました(%.1f秒)" % readiness.elapsed())
 
             # 常時稼働を始める前に自動再学習を確認する
             # (学習はCPUを多く使うため解析と同時走らを避け、
@@ -126,8 +131,12 @@ class CoreConfig(AppConfig):
             try:
                 from core import retraining
 
+                readiness.note("model", "自動再学習を確認中…(ここで数秒〜数十秒かかることがあります)")
                 retraining.run_startup_retraining()
+                readiness.note("model", "自動再学習の確認が完了しました(経過 %.1f秒)" % readiness.elapsed())
             except Exception as exc:  # noqa: BLE001 -学習失敗でWebアプリ/解析は止めない
+                readiness.note("model", "自動再学習でエラー(現行モデル継続): %s: %s" % (
+                    type(exc).__name__, exc), "error")
                 print(f"[Retrain] 自動再学習でエラー(現行モデル継続): "
                       f"{type(exc).__name__}: {exc}", flush=True)
 
@@ -135,10 +144,13 @@ class CoreConfig(AppConfig):
                 try:
                     ai_engine.start_persistent(verbose=first)
                 except Exception as exc:  # noqa: BLE001 -起動失敗でもWebアプリは止めない
+                    readiness.note("camera", "常時稼働の起動に失敗: %s: %s" % (
+                        type(exc).__name__, exc), "error")
                     if first:
                         print(f"[RealtimeAI] 常時稼働の起動に失敗: {type(exc).__name__}: {exc}")
                 if first:
                     if not ai_engine.devices():
+                        readiness.note("camera", "現在カメラが見つかりません(接続されると自動で開始します)", "warn")
                         print("[RealtimeAI] 現在カメラが見つかりません(接続されると自動で開始します)")
                     first = False
                 time.sleep(retry_seconds)

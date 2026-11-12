@@ -16,7 +16,8 @@ caregiver_safety/realtime_lstm.py の判定パイプライン
 
 検知した異常は `core.models.Alert` に作成するため、
 既存の /api/alerts/ ポーリング(通知音・トースト・OS通知)がそのまま効く。
-(擬似アラートを生成するデモ用シミュレーターは削除済み。ここで生成されるものが唯一の異常登録)
+自動で擬似アラートを作るシミュレーターは削除済みだが、設定ページのボタンから
+**手動で1件作るデモ**は `core/demo_alerts.py` に入っている(押さない限り増えない)。
 
 tensorflow / mediapipe / PIL が未導入の環境でも Webアプリ自体は起動できるよう、
 外部ライブラリの import とモデル読み込みはすべて初回使用時(遅延)に行う。
@@ -31,6 +32,7 @@ from django.db import close_old_connections
 from django.utils import timezone
 
 from . import camera_service
+from . import readiness
 from .models import AISettings, Alert, Camera, PersonState, Recording
 
 # caregiver_safety/realtime_lstm.py と同じ判定パラメータ
@@ -112,11 +114,18 @@ def _load_shared():
 
     MediaPipe の PoseLandmarker はスレッドセーフではないためここでは作らない
     (`_get_landmarker` がデバイスごとに1個作る)。
+
+    所要時間は実測で10〜20秒(TensorFlow の import が最長)。`core/readiness.py` に
+    途中経過を出して、ゲージが「検知だけ100%で映像は未表示」に見えないようにする。
     """
     global _shared
     with _shared_lock:
         if _shared is not None:
             return _shared
+
+        began = time.monotonic()
+        readiness.model_started("モデルファイルを確認中…")
+        readiness.note("model", "AIモデルの準備を開始します")
 
         model_dir = _model_dir()
         pose_path = model_dir / "pose_landmarker_full.task"
@@ -126,25 +135,32 @@ def _load_shared():
 
         missing = [str(p) for p in (pose_path, fall_path, state_path, labels_path) if not p.exists()]
         if missing:
-            raise ModelLoadError(
-                "モデルファイルが不足しています: " + ", ".join(missing) +
-                "(caregiver_safety の models/ dataset/ からコピーしてください)"
-            )
+            message = ("モデルファイルが不足しています: " + ", ".join(missing) +
+                       "(caregiver_safety の models/ dataset/ からコピーしてください)")
+            readiness.model_failed(message)
+            readiness.note("model", message, "error")
+            raise ModelLoadError(message)
 
+        readiness.model_step(10, "tensorflow / mediapipe を読み込み中…(ここが最長)")
         try:
             import numpy as np
             from mediapipe.tasks.python import vision
             from tensorflow.keras.models import load_model
         except Exception as exc:
-            raise ModelLoadError(
+            message = (
                 f"AIライブラリを読み込めません: {type(exc).__name__}: {exc}"
                 "(tensorflow / mediapipe / pillow を導入してください)"
-            ) from exc
+            )
+            readiness.model_failed(message)
+            readiness.note("model", message, "error")
+            raise ModelLoadError(message) from exc
 
+        readiness.model_step(55, "Kerasモデル(LSTM)を読み込み中…")
         fall_model = load_model(str(fall_path))
         state_model = load_model(str(state_path))
         state_labels = [str(label) for label in np.load(str(labels_path), allow_pickle=True)]
 
+        readiness.model_step(78, "推論関数を tf.function にコンパイル中…")
         _shared = {
             "np": np,
             "pose_path": str(pose_path),
@@ -155,6 +171,9 @@ def _load_shared():
             # Kerasモデルは複数スレッドから同時に呼ばない(推論は約7msなので直列化しても速い)
             "infer_lock": threading.Lock(),
         }
+        seconds = round(time.monotonic() - began, 1)
+        readiness.model_ready(seconds)
+        readiness.note("model", "AIモデルの準備が完了しました(%.1f秒)" % seconds, "ok")
         return _shared
 
 
@@ -180,7 +199,13 @@ def _get_landmarker(device):
             )
         )
         _landmarkers[device] = landmarker
+        readiness.note("model", "PoseLandmarker を準備しました(%s)" % _label(device))
         return landmarker
+
+
+def _label(device):
+    """ログに出すカメラ表記(index / IPキー)"""
+    return "index %s" % device if isinstance(device, int) else "IP %s" % device
 
 
 def _make_inferencer(model):
@@ -389,6 +414,8 @@ class _CameraRuntime:
             landmarker = _get_landmarker(self.device)
         except Exception as exc:
             self._set_status(phase="error", error=f"{type(exc).__name__}: {exc}")
+            readiness.model_failed("%s: %s" % (type(exc).__name__, exc))
+            readiness.note("model", "モデル読み込み失敗: %s" % exc, "error")
             print(f"[RealtimeAI:{self.device}] モデル読み込み失敗: {exc}")
             return
 
@@ -462,6 +489,10 @@ class _CameraRuntime:
         window_count = 0
         current_fps = 0.0
 
+        # 起動準備ゲージ用(core/readiness.py)
+        got_first_frame = False
+        announced_running = False
+
         # 異常検知からの自動録画(検知後 N 秒間を保存して Recording にする)
         record_seconds = int(getattr(settings, "AI_RECORDING_SECONDS", 8))
         rec_until = None      # 録画終了予定時刻(monotonic)
@@ -499,12 +530,22 @@ class _CameraRuntime:
                             f"{int(lost_timeout)}秒以上途絶えました(接続を確認してください)"
                         ),
                     )
+                    readiness.camera_failed(device, "映像が %d 秒以上途絶" % int(lost_timeout))
+                    readiness.note("camera", "%s の映像が途絶しました" % _label(device), "error")
                     print(f"[RealtimeAI:{device}] 映像途絶 / 解析スレッドを終了します")
                     break
                 time.sleep(0.05)
                 continue
             lost_since = None
             self.last_frame_at = time.monotonic()
+
+            if not got_first_frame:
+                got_first_frame = True
+                readiness.camera_step(
+                    device, 70, "frame",
+                    "初フレーム取得(サーバー起動から%.1f秒)" % readiness.elapsed(),
+                )
+                readiness.note("frame", "%s の初フレームを読みました" % _label(device), "ok")
 
             # 初フレームだけサムネイルを保存(一覧で「どれがどのカメラか」確認できる)
             # 検知はカメラを掴んでいると開けないので、解析側から残すのが確実
@@ -701,6 +742,14 @@ class _CameraRuntime:
             if now - window_start >= 1.0:
                 current_fps = round(window_count / (now - window_start), 1)
                 window_start, window_count = now, 0
+                if current_fps > 0 and not announced_running:
+                    announced_running = True
+                    readiness.camera_step(
+                        device, 100, "analyzing",
+                        "%s 解析稼働中(%s fps)" % (_label(device), current_fps),
+                    )
+                    readiness.note("analyze", "%s の解析が始まりました(%s fps)" % (
+                        _label(device), current_fps), "ok")
 
             status_kwargs = {
                 "phase": "running",
@@ -1159,10 +1208,18 @@ class RealtimeAIEngine:
                 return True
         # カメラキャプチャをエンジン側で常時確保する
         # (ブラウザの「停止」で camera_service.release が呼ばれても参照カウントで残る)
+        began = time.monotonic()
+        readiness.camera_step(device, 10, "opening", "%s を開いています…" % _label(device))
         if not camera_service.acquire(device):
+            readiness.camera_failed(device, "カメラを開けませんでした(未接続の可能性)")
             if verbose:
                 print(f"[RealtimeAI:{device}] カメラを開けません(未接続の可能性)")
             return False
+        readiness.camera_step(
+            device, 40, "opened",
+            "カメラを確保しました(%.1f秒)" % (time.monotonic() - began),
+            seconds=round(time.monotonic() - began, 1),
+        )
         with runtime.lock:
             runtime.persistent = True
             runtime.last_frame_at = time.monotonic()

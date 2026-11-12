@@ -1402,3 +1402,110 @@ message: すべての検知データ・録画・解決報告と、media 内の�
 ### 反映にはサーバー再起動が必要
 `--noreload` で運用しているため、`core/views.py` の変更は**再起動するまで有効になりません**。
 
+---
+
+## 32. 2026-11-12 設定ページに「異常検知デモ」ボタンを再設置(手動のみ)
+
+ユーザー指示: 「設定ページに、やはり異常検知デモをつけたい。**ボタンを押すとランダムな異常検知が出る**ボタンを再設置して」
+
+### 第20章との関係(方針変更なので明記しておく)
+第20章で **デモで問題を発生する機構をすべて削除**したうちの、
+- **自動生成するもの**(`ai_simulator.py` / `ai_monitor.py` / 常時稼働の起動フック)は
+  **削除したまま** = 戻していません
+- **手動トリガーだけ**を再開しました。押さない限り1件も増えない
+
+### 実装
+| 場所 | 内容 |
+|---|---|
+| `core/demo_alerts.py`(新規) | `create_demo_alert(kind=None, camera=None)`。ランダムな `Alert` を1件作る。**スレッドもタイマーも持たない**(押されたときだけ動く純関数) |
+| `core/views.py` | `settings()` に action `demo_alert` を追加。成功時は「どのカメラ/哪种類/信頼度何%」をメッセージに出す |
+| `templates/accounts/settings.html` | 「異常検知デモ」カードに `🚨 デモの異常検知を1件発生させる` ボタン + 注意書き |
+
+生成する値:
+- 種類: `fall` / `suspicious` / `zone` からランダム
+- 信頼度: `0.70〜0.99`
+- `detected_state`: 種類に合わせて 転倒=`lying` / あやしい=`sitting|lying` / ゾーン=`standing`
+- `status=open`、`occurred_at = now - 0〜15秒`
+- カメラ: オンライン優先でランダム(無ければ任意、1台も無ければ警告メッセージ)
+- `thumbnail_url`: 実在する代替SVG(`thumb_fall.svg` / `thumb_suspicious.svg`、zoneは無し→🚨表示)
+
+**`Recording` は作らない**。実体のない mp4 をリンクして再生を壊さないため。
+一覧・詳細は `has_real_thumbnail` が False なので代替SVG/🚨側で描画されます。
+
+### 検証(`transaction.atomic()` + ロールバックで実DBに残していない)
+```
+HTTP 200 / message: 異常検知デモを発生させました:test-main-camera / 立ち入り禁止ゾーン / 信頼度 87%
+作成例: kind=zone 信頼度=0.87 状態=立っている status=open thumb=(なし)
+8回押した種類の内訳: {suspicious:3, zone:4, fall:1}          ← ランダムに分散
+/api/alerts/ : HTTP 200、返ってきた件数=8                    ← 5秒ポーリングで通知に乗る
+   ペイロード例: {"kind_label":"転倒","status":"open","status_label":"未対応","location":"temp"}
+GET /alerts/ /alerts/?status=open /alerts/<id>/ /recordings/  → すべて 200
+「対応する」POST → 302, status=responding, responder=admin     ← フローも実AIと同じ経路
+設定ページの描画: 「異常検知デモ」/ value="demo_alert" / 注意書き すべて有 ✓
+manage.py check / verify_pages → 全通過
+ロールバック後のアラート数: 0(実DBは無傷)
+```
+
+### 運用上の注意(UIにも書いた)
+デモのアラートでも「誤検知として報告」を押すと **`AISettings` の感度自動調整に反映**されます。
+練習で連打すると実運用の閾値が動くので、消すなら設定ページの「全削除」を使ってください。
+
+### 反映にはサーバー再起動が必要
+`--noreload` 運用のため、`core/views.py` / `core/demo_alerts.py` / テンプレートの変更は
+**再起動するまで有効になりません**(テンプレートは `runserver` でも再読込される場合が
+ありますが、ビューのコードは再起動が必要です)。
+
+---
+
+## 33. 2026-11-12 起動準備の統合ゲージ + 準備ログを追加
+
+ユーザー指示: 「カメラ起動までしばらく時間がかかる。読み込みゲージはあるが100%になっても
+表示できない。**AIモデル準備とカメラ準備を合わせた進行ゲージ**を新たに作り、
+**簡単なログ出力**もつけてほしい」
+
+### ゲージが100%なのに映像が出ない理由
+既存のゲージ(`/debug/camera/progress/`)は **デバイス探索の進捗だけ**でした。
+実際に映像が出るまでには次が必要で、とくにモデル準備が最長です。
+
+1. カメラ検知 2. AIモデル準備(tensorflow import + Keras load + PoseLandmarker)
+3. カメラ確保 4. 初フレーム取得 5. 解析稼働
+
+### 実装
+| 場所 | 内容 |
+|---|---|
+| `core/readiness.py` **(新規)** | 5段階の重み付き進捗とログ(最大240行)。`note/model_*/camera_step/snapshot` |
+| `core/ai_engine.py` | `_load_shared`(10/55/78%の途中経過と完了秒数)、`_get_landmarker`、`_start_one`(確保秒数)、`_loop`(初フレーム・解析開始)、失敗/映像途絶 |
+| `core/apps.py` | 起動・ロック確保・自動再学習の開始/完了・カメラ未検出をログへ |
+| `core/views.py` + `config/urls.py` | `GET /debug/camera/readiness/`(login_required) |
+| `templates/debug/camera.html` | 「起動準備」カード(ゲージ / 5段階の内訳 / ログ / 折畳み) |
+| `static/js/debug_camera.js` | 1秒ポーリング(準備完了後は5秒に間引く)。ステージ変化を自動ログ |
+| `static/css/style.css` | `.ready-bar` `.ready-stage` `.ready-log` |
+
+重み: 検知15 / **AIモデル35** / カメラ確保15 / 初フレーム20 / 解析稼働15
+複数カメラは「一番進んだカメラ」をゲージに採用(1台出れば表示できるため)。
+検知が未実行でもカメラが確保済みなら検知を100%扱いにして、ゲージが100%に届かなくならないようにした。
+
+### 実測タイムライン(実サーバーを2回起動して採取)
+```
+ 0.0s 起動 → 2.0s ロック確保 → 2.0s 自動再学習確認(変更なし 0.1秒)
+ 2.2s index 3→2→1 を開いて失敗(未接続、計0.2秒) → 3.2s index 0 確保(0.8秒)
+ 3.3s モデル準備開始 → 18.4s 完了(15.1秒) → 19.3s 初フレーム → 20.8s 解析稼働 29.0fps
+ 1回目: 準備完了 21.2秒 / 2回目(キャッシュ暖かい): 準備完了 10.2秒(モデル 5.9秒)
+```
+**待時間の正体は tensorflow の import + Keras load**でした(1回15秒、2回目6秒)。
+
+### 検証
+```
+readiness の段階計算: 0 → 15 → 18.5 → 50 → 64 → 80.5 → 100%(ready=True)
+GET /debug/camera/readiness/ → HTTP 200 / keys=[cameras, elapsed, log, model, percent, ready, stages]
+デバッグページの描画: 見出し・ready-card・data-ready-url・ゲージ・ステージ・ログ・切替ボタン すべて OK
+CSS/JS の配信: .ready-bar / .ready-stage / .ready-log / pollReady / renderReady すべて OK
+最終状態: percent=100.0 ready=True / ログ24行 / 「カメラ検知 完了(1台)」
+manage.py check → no issues
+```
+
+### このログで新たに見えたこと
+`カメラ検知 完了(1台)` かつ `cameras` に index 0〜3 しか無い =
+**Piカメラ2台がまだ台帳に登録されていない**(第30章の状態変化)。
+ログを出すまで、見かけ上「検知1台」が正常に見えていました。
+

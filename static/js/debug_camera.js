@@ -554,6 +554,105 @@
 
   loadDevices(false);
 
+  /* ---------- 起動準備ゲージ(検知 + AIモデル + カメラ + 初フレーム + 解析) ---------- */
+  var readyRoot = document.getElementById("ready-card");
+  if (readyRoot) {
+    var readyUrl = readyRoot.dataset.readyUrl;
+    var readyBar = readyRoot.querySelector(".ready-bar");
+    var readyFill = document.getElementById("ready-fill");
+    var readyPercentEl = document.getElementById("ready-percent");
+    var readyChip = document.getElementById("ready-chip");
+    var readyStages = document.getElementById("ready-stages");
+    var readyLog = document.getElementById("ready-log");
+    var readyToggle = document.getElementById("ready-log-toggle");
+    var readyTimer = null;
+    var readyDone = false;
+
+    function stageMark(pct, detail) {
+      if (pct >= 100) { return "✓"; }
+      if (detail && /失敗|開けません|途絶|できません/.test(detail)) { return "✗"; }
+      return pct > 0 ? "▶" : "・";
+    }
+
+    function renderReady(data) {
+      var pct = Math.max(0, Math.min(100, data.percent || 0));
+      readyFill.style.width = pct + "%";
+      readyPercentEl.textContent = Math.round(pct) + "%";
+      readyBar.className = "ready-bar" + (data.ready ? " is-ready" : (pct >= 100 ? "" : ""));
+
+      if (data.ready) {
+        readyChip.textContent = "準備完了 (" + (data.elapsed || 0) + "秒)";
+        readyChip.className = "chip chip--resolved";
+      } else {
+        var doing = (data.stages || []).filter(function (s) { return s.percent > 0 && s.percent < 100; });
+        readyChip.textContent = "準備中 " + Math.round(pct) + "% / " + (data.elapsed || 0) + "秒";
+        readyChip.className = "chip chip--responding";
+        if (doing.length) {
+          readyPercentEl.title = doing[0].label + ": " + doing[0].detail;
+        }
+      }
+
+      readyStages.innerHTML = "";
+      (data.stages || []).forEach(function (s) {
+        var li = document.createElement("li");
+        li.className = "ready-stage" + (s.percent >= 100 ? " is-done" : "");
+        var mark = document.createElement("span");
+        mark.className = "ready-stage__mark";
+        mark.textContent = stageMark(s.percent, s.detail);
+        var label = document.createElement("span");
+        label.className = "ready-stage__label";
+        label.textContent = s.label + "(重み" + s.weight + ")";
+        var pctEl = document.createElement("span");
+        pctEl.className = "ready-stage__pct";
+        pctEl.textContent = Math.round(s.percent) + "%";
+        var detail = document.createElement("span");
+        detail.className = "ready-stage__detail";
+        detail.textContent = s.detail || "";
+        li.appendChild(mark);
+        li.appendChild(label);
+        li.appendChild(pctEl);
+        li.appendChild(detail);
+        readyStages.appendChild(li);
+      });
+
+      var log = data.log || [];
+      readyLog.textContent = "";
+      log.forEach(function (row) {
+        var span = document.createElement("span");
+        span.className = row.level === "ok" ? "lv-ok" : (row.level === "error" ? "lv-error" : "");
+        span.textContent = "[" + (row.t || 0).toFixed(2) + "s][" + row.stage + "] " + row.msg + "\n";
+        readyLog.appendChild(span);
+      });
+      if (!log.length) {
+        readyLog.textContent = "(まだログがありません)";
+      }
+      readyLog.scrollTop = readyLog.scrollHeight;
+
+      // 準備完了後はポーリング間隔を緩める(ログは残す)
+      if (data.ready && !readyDone) {
+        readyDone = true;
+        if (readyTimer) { window.clearInterval(readyTimer); }
+        readyTimer = window.setInterval(pollReady, 5000);
+      }
+    }
+
+    function pollReady() {
+      fetch(readyUrl, { headers: { Accept: "application/json" } })
+        .then(function (res) { return res.ok ? res.json() : null; })
+        .then(function (data) { if (data) { renderReady(data); } })
+        .catch(function () { /* 取れなければ次回 */ });
+    }
+
+    if (readyToggle) {
+      readyToggle.addEventListener("click", function () {
+        readyLog.hidden = !readyLog.hidden;
+        readyToggle.textContent = readyLog.hidden ? "展開" : "折畳む";
+      });
+    }
+    pollReady();
+    readyTimer = window.setInterval(pollReady, 1000);
+  }
+
   /* ---------- リアルタイムAI解析の状態表示(1秒ポーリング) ---------- */
   var aiRoot = document.getElementById("ai-status");
   if (!aiRoot) {

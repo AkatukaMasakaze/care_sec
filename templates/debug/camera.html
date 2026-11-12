@@ -38,6 +38,31 @@
   <p class="form-error-banner" id="device-error" hidden></p>
 </section>
 
+{# ===== 起動準備の統合ゲージ(検知 + AIモデル + カメラ + 初フレーム) ===== #}
+<section class="card"
+         id="ready-card"
+         data-ready-url="{% url 'debug_camera_readiness' %}">
+  <div class="card__header">
+    <h2>起動準備</h2>
+    <span class="chip" id="ready-chip">準備中</span>
+  </div>
+  <p class="muted ai-status-note">
+    カメラ検知だけでなく <strong>AIモデルの準備(TensorFlow / Keras / MediaPipe)・カメラ確保・
+    初フレーム取得・解析開始</strong> を合わせた進行率です。
+    モデル準備は起動後 <strong>10〜20秒</strong>かかるため、検知ゲージが100%でも映像はまだ出ません。
+  </p>
+  <div class="ready-bar">
+    <div class="ready-bar__fill" id="ready-fill"></div>
+    <span class="ready-bar__text" id="ready-percent">0%</span>
+  </div>
+  <ul class="ready-stages" id="ready-stages"></ul>
+  <div class="card__header card__header--sub">
+    <h3>準備ログ</h3>
+    <button type="button" class="btn btn--ghost btn--sm" id="ready-log-toggle">折畳む</button>
+  </div>
+  <pre class="ready-log" id="ready-log">ログを待っています…</pre>
+</section>
+
 {# ===== リアルタイムAI解析(caregiver_safety モデル) ===== #}
 <section class="card"
          id="ai-status"
