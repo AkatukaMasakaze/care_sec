@@ -19,6 +19,7 @@ from . import camera_service
 from .ai_engine import ai_engine as realtime_ai
 from .demo_alerts import create_demo_alert
 from .models import AISettings, Alert, AlertReport, Camera, Recording, Resident
+from .permissions import admin_required
 
 
 # ================= ダッシュボード =================
@@ -447,8 +448,10 @@ def api_alerts(request):
 #    人物検知の座標JSONを使う仕組み自体が不要になりました。
 
 
-# ================= カメラデバッグ(実カメラ環境テスト) =================
-@login_required
+# ================= カメラデバッグ(管理者専用) =================
+# 実カメラを占有し、デバイスを操作する画面なので一般介護士には見せない
+# (`core/permissions.admin_required`)。未ログインはログイン画面へ誘導する。
+@admin_required
 def debug_camera(request):
     """実カメラ表示のデバッグページ(デモ機能とは独立)"""
     import time as _time
@@ -462,7 +465,7 @@ def debug_camera(request):
     })
 
 
-@login_required
+@admin_required
 def debug_camera_devices(request):
     """カメラ一覧JSON(?force=1 で再検知)
 
@@ -478,7 +481,7 @@ def debug_camera_devices(request):
     return JsonResponse(result)
 
 
-@login_required
+@admin_required
 def debug_camera_detect_progress(request):
     """デバイス検知の進捗JSON(ブラウザの進行バー表示用)"""
     return JsonResponse(camera_service.detect_progress())
@@ -494,7 +497,7 @@ def _parse_device_key(raw):
         return raw  # "cam:12" など
 
 
-@login_required
+@admin_required
 def debug_camera_ai_status(request):
     """リアルタイムAI解析の状態JSON(?device=キー / 無しは全カメラの要約から1台)"""
     data = realtime_ai.status(_parse_device_key(request.GET.get("device")))
@@ -505,7 +508,7 @@ def debug_camera_ai_status(request):
     return JsonResponse(data)
 
 
-@login_required
+@admin_required
 def debug_camera_readiness(request):
     """起動準備の統合ゲージJSON(検知 + AIモデル + カメラ確保 + 初フレーム + 解析)"""
     from . import readiness
@@ -513,7 +516,7 @@ def debug_camera_readiness(request):
     return JsonResponse(readiness.snapshot())
 
 
-@login_required
+@admin_required
 def debug_camera_stream(request):
     """選択デバイスのMJPEGストリーム(?device=インデックス)
 

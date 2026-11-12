@@ -78,7 +78,8 @@
         <a href="{% url 'settings' %}"><span class="menu__icon"><i class="fa-solid fa-gear"></i></span>設定</a>
       </li>
       {% if user.is_admin %}
-      {# 実カメラ環境テスト用のデバッグページ(adminのみ表示) #}
+      {% comment %} # 実カメラ環境テスト用。リンクを隠すだけでなく、ビュー側も admin_required で
+         管理者限定にしている(`core/permissions.py`)ので直URLでも入れない  {% endcomment %}
       <li class="menu__item{% if request.resolver_match.url_name == 'debug_camera' %} is-active{% endif %}">
         <a href="{% url 'debug_camera' %}"><span class="menu__icon"><i class="fa-solid fa-camera"></i></span>カメラデバッグ</a>
       </li>

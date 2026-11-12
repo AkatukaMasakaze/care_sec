@@ -1718,3 +1718,59 @@ manage.py check → no issues
   **カード内を一覧スクロール**するのが正しい運用動作
 - レスポンシブ(`max-width: 900px`)では1ページ制約が外れるので、従来どおりページスクロールで読める
 
+---
+
+## 37. 2026-11-12 管理者/一般介護士の2段階アクセス制御
+
+ユーザー指示: 「adminユーザーはすべてにアクセス可能。**一般ユーザー(看護師)はカメラデバイスページに完全にアクセスできない**ようにし、**Djangoの管理者画面もadminのみ**にしてくれ」
+
+### 設計
+このシステムはDjango標準の権限機能(groups / user_permissions)を廃止済み(`core.User` は
+`PermissionsMixin` を持たない)。なので**既存の `is_admin` 列だけ**で2段階を作る。
+
+| | 業務画面(異常検知/録画/報告/設定) | カメラデバッグ | Django管理画面 |
+|---|---|---|---|
+| 管理者 `is_admin=True` | 200 | 200 | 200 |
+| 一般介護士 | 200 | **403** | **403** |
+| 未ログイン | ログインへ誘導 | ログインへ誘導(`next`保持) | `/admin/login/` |
+
+### 実装
+| 場所 | 内容 |
+|---|---|
+| `core/permissions.py`(新規) | `is_admin(user)` と `@admin_required`。未ログインは `redirect_to_login(next付き)`、一般介護士は `permission_denied.html` を **status=403** で返す |
+| `templates/permission_denied.html`(新規) | 理由・現在のアカウント・管理者権限の有無を表示。**画面の存在を隠さず理由を出す**(「カメラが壊れた」と誤解されるのを防ぐ) |
+| `core/views.py` | `/debug/camera/` 系6ビュー(`debug_camera` / `devices` / `detect_progress` / `ai_status` / `readiness` / `stream`)を `@login_required` → `@admin_required` へ変更 |
+| `core/admin.py` | ①`CareSecAdminSite.has_permission` を `is_admin` 必須に ②`BaseModelAdmin` の `has_*_permission` を `True` 固定から `is_admin(request.user)` 判定へ(別のAdminSiteから再利用したときの抜け穴を塞ぐ) ③**`admin_view` をラップ**して、Django既定の「権限なし→`/admin/login/`へ302誘導」を**403に変換** ④`login()` も同様に403 |
+| `templates/base.html` | サイドバーのカメラデバッグリンクは `{% if user.is_admin %}` で元から非表示。**リンクを隠すだけでは直URLを防げない**ので、ビュー側の `@admin_required` を本番の歯止めにした |
+
+### はまった点(Django 6.1 の実装確認)
+`CareSecAdminSite.login()` をオーバーライドすれば403を返せると思ったが、**`AdminSite.admin_view` の
+`inner()` は `self.login()` を呼ばず `redirect_to_login(request.get_full_path(), reverse("admin:login"))`
+を直接呼ぶ**ので、`/admin/` は302のままだった。ソース(.venv の sites.py)を確認したうえで
+`admin_view` 自体をラップする形で解決。
+
+### 実測(ロール別の一括検証)
+```
+① 管理者 業務ページ            6/6 → 200
+② 管理者 カメラデバッグ        6/6 → 200 (devices/progress/ai/readiness/stream 含む)
+③ 管理者 Django管理画面        3/3 → 200 (/admin/ /admin/core/camera/ /admin/core/user/)
+④ 一般介護士 業務ページ        6/6 → 200  ← 業務は従来どおり使える
+⑤ 一般介護士 カメラデバッグ    6/6 → 403
+⑥ 一般介護士 Django管理画面    3/3 → 403  ← 302誘導ではなく403
+⑦ 未ログイン カメラデバッグ    → 302 /accounts/login/?next=/debug/camera/
+   403ページに理由が表示される: True
+   ナビ(カメラデバッグ)が一般介護士に出ない: True / ダッシュボードでも: True
+判定: すべて期待どおり
+manage.py check / verify_pages → 全通過
+```
+検証は `transaction.atomic()` + ロールバックで一時アカウント(`nurse_test`)を作り、最後に削除。
+実DBのユーザーは `admin(is_admin=True)` / `user(is_admin=False)` のまま変更なし。
+
+### 既存データの扱い
+`User.is_staff` / `is_superuser` は**プロパティで `is_admin` を返す**作りなので、
+Django管理画面側の staff 検査も自然に `is_admin` に追随する(列の追加・マイグレーションは不要)。
+
+### 未対応(要確認)
+`/accounts/settings/` の **データ全削除 / AI監視ON・OFF / 異常検知デモ** は、現在も一般介護士が
+操作できます。業務画面なので残しましたが、管理者専用にしたいなら `@admin_required` を1行足すだけです。
+

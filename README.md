@@ -64,21 +64,41 @@ $env:CARE_SEC_ALLOWED_HOSTS = "10.24.23.42, .local"
 | `staff2` | `demo1234` | 佐藤 二郎(介護スタッフ) |
 | `admin`  | `admin1234` | 管理画面(`/admin/`)も利用できる介護士 |
 
-## 権限・グループ機能について(廃止済み)
+## 権限・グループ機能について(2段階ロールのみ)
 
-本システムは**介護士のみが使用する**前提のため、権限機能を全面的に撤去しています。
+Django標準の権限機能(groups / user_permissions)は使わず、**`core.User.is_admin` による
+2段階だけ**で制御しています(`core/permissions.py`)。
 
 | 項目 | 実装 |
 |---|---|
-| ユーザーモデル | `core.User`(Django標準User不使用)。`is_superuser` / `groups` / `user_permissions` を**持たない** |
-| 認証 | `core.auth.CareWorkerBackend`(権限に依存しない専用バックエンド) |
-| 管理画面 | `core.admin.CareSecAdminSite`。**ログイン中の介護士全員が同等にアクセス可能**(閲覧/追加/変更/削除の権限チェックは全て無効化) |
+| ユーザーモデル | `core.User`(Django標準User不使用)。`groups` / `user_permissions` を**持たない**。代わりに `is_admin` を持つ。`is_staff` / `is_superuser` は **`is_admin` を返すプロパティ** |
+| 認証 | `core.auth.CareWorkerBackend`(パスワード認証のみ。`has_perm` は常に True = 権限表は参照しない) |
+| **管理者**(`is_admin=True`) | 全機能。カメラデバッグ・Django管理画面も可利用 |
+| **一般介護士**(`is_admin=False`) | 業務画面(異常検知・録画・報告・プロフィール・設定)のみ。**カメラデバッグと管理画面は 403** |
+| カメラデバッグ | `/debug/camera/` とその配下6エンドポイント(`devices` / `progress` / `ai` / `readiness` / `stream`)は `@admin_required`。サイドバーのリンクも管理者にしか出ないが、**直URLでも入れない** |
+| Django管理画面 | `CareSecAdminSite.has_permission` が `is_admin` を要求。加えて `admin_view` を上書きし、Django既定の「権限なし→ログイン画面へ302誘導」を**403に変換**している(確定しているユーザーにログインを要求しない) |
 | 権限レコード | 全モデルに `default_permissions = ()` を設定し、`auth_permission` に**業務モデルの権限行を生成しない** |
-| ユーザー追加 | `/admin/core/user/add/` から実施(パスワードはハッシュ化して保存) |
+| ユーザー追加 | `/admin/core/user/add/`(管理者のみ)。`manage.py createsuperuser` は `create_superuser()` 経由で `is_admin=True` を立てるので、この手順のまま管理者を作れる |
+
+### 既存アカウントの格上げ / 降格
+
+```powershell
+python manage.py shell -c "from core.models import User; u=User.objects.get(username='user'); u.is_admin=True; u.save(update_fields=['is_admin'])"
+```
+管理画面 `/admin/core/user/` の「管理者使用する」チェックでも可。
+
+### 403 の見え方
+`templates/permission_denied.html` を返し、理由(「この画面は管理者のみアクセスできます」)と
+現在のアカウント・管理者権限の有無を表示します。**ページ存在を隠すのではなく理由を出す**ので、
+「カメラが壊れた」との誤解を防げます。未ログインの人は従来どおり `next` を引き継いでログイン画面へ誘導します。
+
+> **注意**: `/accounts/settings/`(データ全削除・AI監視ON/OFF・異常検知デモ)は
+> 現在**一般介護士も利用できます**。ここも管理者専用にしたい場合は言ってください
+> (`@admin_required` を1行足すだけです)。
 
 残る `django_content_type` / `auth_permission` / `auth_group` テーブルは
 Djangoフレームワーク内部(管理画面の操作ログ用)のため残りますが、
-**当システムの権限判定には一切使用していません**。
+**当システムの権限判定には一切使用していません**(判定は `is_admin` のみ)。
 
 ## 便利な管理コマンド
 

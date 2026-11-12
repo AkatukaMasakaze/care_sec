@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block title %}アクセスできません{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>🔒 アクセスできません</h1>
+  <p class="page-header__sub">{{ reason|default:"この画面は管理者のみアクセスできます。" }}</p>
+</div>
+
+<section class="card">
+  <div class="card__header">
+    <h2>ご案内</h2>
+  </div>
+  <p class="muted">
+    カメラのデバッグ画面(デバイス検知・ライブ表示・AI解析の状態)と Django 管理画面は、
+    施設システムを運用する<strong>管理者アカウント</strong>専用です。<br>
+    異常検知・録画・解決報告などの<strong>業務画面はこれまでどおり利用できます</strong>。
+  </p>
+  <p class="muted">
+    ログイン中のアカウント: <strong>{{ request.user.username }}</strong>
+    (管理者権限: {{ request.user.is_admin|yesno:"あり,なし" }})
+  </p>
+  <div class="demo-actions">
+    <a href="{% url 'dashboard' %}" class="btn btn--primary">ダッシュボードへ戻る</a>
+  </div>
+</section>
+{% endblock %}
