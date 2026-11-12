@@ -149,6 +149,30 @@ python manage.py verify_pages        # 全ページ+「対応→解決→報告�
 
 詳細なURL設計・コンテキスト変数の仕様は **URLS.md** を参照してください。
 
+## ダッシュボードの「1ページに収める」レイアウトと一覧のスクロール
+
+`@media (min-width: 901px)` で、ダッシュボード(`.main > .stats-grid` を持つページ)は
+**画面高さ内に収める**設計です(`body { overflow:hidden }` + `.main { height: calc(100vh - topbar) }`)。
+
+そのため、一覧が伸びるカードは次の連鎖で高さを受け取ります。
+
+```
+.main(100vh) → .grid-2(flex:1 1 0; min-height:0) → .card(min-height:0; overflow:hidden)
+              → .mini-list(flex:1 1 auto; min-height:0)
+```
+
+**注意(実測で踏んだ)**: `.card` が `overflow:hidden` なので、**はみ出した行はスクロール先が無く切り捨てられて見えません**。
+カメラ台数は `Camera.objects.all()` で無制限なので、カメラを増やすと下の方が見えない状態になっていました。
+現在は `.mini-list` 自体に `overflow-y: auto` を持たせ、**その一覧だけ**がスクロールします
+(`overscroll-behavior: contain` でページ本体には干渉しない)。
+
+| 一覧 | 件数 | 挙動 |
+|---|---|---|
+| カメラ状態 | **無制限** | 少ないときは行を伸ばして埋める / `min-height:34px` までしか縮めない / 溢れたら一覧内スクロール。ヘッダに「N台」を表示 |
+| 直近の異常 / 直近の録画 | 5件 / 4件で打ち切り | 同じ共通ルールで、縦が足りない環境ではスクロールに出る |
+
+カメラを増やして見えない場合は、**ページ全体がスクロールできないのが正常**で、カード内を一覧スクロールします。
+
 ## リアルタイムAI解析の統合(caregiver_safety)
 
 `/debug/camera/` のライブ表示に、介護者安全監視システム **caregiver_safety** の

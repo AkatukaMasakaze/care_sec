@@ -1673,3 +1673,48 @@ manage.py check / verify_pages → 全通過
 core/camera_service.py / config/settings.py 構文 OK
 ```
 
+---
+
+## 36. 2026-11-12 ダッシュボードのカメラ状態を「一覧だけスクロール」に変更
+
+ユーザー指示: 「ダッシュボードは1ページに収めるルールなので、カメラを増やすとオーバーフローする可能性がある。**カメラの部分だけスクロール**できるようにして」
+
+### 高さの連鎖(1ページレイアウト)
+```
+@media (min-width: 901px)
+  body:has(.main > .stats-grid)      { overflow: hidden }         ← ページ全体を固定
+  .main:has(> .stats-grid)           { height: calc(100vh - topbar); overflow: hidden }
+    > .grid-2                        { flex: 1 1 0; min-height: 0 }
+      > .card                        { min-height: 0; overflow: hidden }   ← ここで切れる
+        .mini-list                   { flex: 1 1 auto; min-height: 0 }
+```
+
+### 問題
+`views.dashboard` の `cameras = Camera.objects.all()` は**件数無制限**(直近の異常=5件、録画=4件は打ち切り)。
+従来のカメラ一覧は `li { flex: 1 1 0; min-height: 0 }` で**行を等分に縮めて**収めようとしていたため、
+
+1. 行が文字の高さ以下に潰れて読めない
+2. 潰しきれない分は `.card { overflow: hidden }` で**スクロール先が無く切り捨てられ、見えない**
+
+という状態になる。カメラを増やしたときに実際に踏む。
+
+### 修正(`static/css/style.css`)
+| 変更 | 内容 |
+|---|---|
+| `.mini-list` 共通 | `overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin` を追加。**溢れたらその一覧がスクロール**する。`overscroll-behavior: contain` で内側を最後まで回したらページに返す |
+| カメラ一覧のみ追加 | `li { flex: 1 1 auto; min-height: 34px }` … **少ないときは伸ばしてカードの高さに埋める(見た目を従来維持)/ 34px以下には縮めない(読める)/ 必要高さが超えたらスクロールに出る** |
+| `templates/dashboard.html` | ヘッダに「N台」を表示(スクロール内有であることを伝える) |
+
+### 実測
+```
+CSS の { と } の数: 362 / 362(対応OK)
+カメラ22台で描画 → HTTP 200 / 行 22件 / ヘッダに「22台」
+(検証は transaction.atomic + ロールバック。DBのカメラ台数は 2 のまま)
+manage.py check → no issues
+```
+
+### 残る注意
+- ページ全体は `overflow:hidden` のまま(**1ページに収める仕様は維持**)。見えない行が出たら
+  **カード内を一覧スクロール**するのが正しい運用動作
+- レスポンシブ(`max-width: 900px`)では1ページ制約が外れるので、従来どおりページスクロールで読める
+

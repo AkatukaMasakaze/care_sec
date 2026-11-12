@@ -126,6 +126,8 @@
   <section class="card">
     <div class="card__header">
       <h2>カメラ状態</h2>
+      {# 台数無制限なので、はみ出した分はこの一覧の中でスクロールする(件数を表示) #}
+      <span class="muted" style="font-size:11px">{{ cameras|length }}台</span>
     </div>
     <ul class="mini-list">
       {% for camera in cameras %}

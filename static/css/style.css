@@ -1463,9 +1463,15 @@ input:checked + .toggle-slider:before {
     height: auto;
   }
 
+  /* 1ページレイアウトでは card が overflow:hidden なので、はみ出した行は
+     **スクロール先が無く切り捨てられて見えない**(カメラは件数無制限で実際に踏んだ)。
+     一覧そのものにスクロールを持たせる。 */
   .main:has(> .stats-grid) .mini-list {
     flex: 1 1 auto;
     min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
   }
   .main:has(> .stats-grid) .mini-list li > a,
   .main:has(> .stats-grid) .mini-list li > .mini-list__row {
@@ -1477,19 +1483,26 @@ input:checked + .toggle-slider:before {
   .main:has(> .stats-grid) .mini-list__body small {
     line-height: 1.4;
   }
-  /* カメラ一覧は行を均等に伸ばし、低い画面でも収める */
+  /* カメラ状態の一覧だけの追加調整。以前は行を等分に伸ばして収めようとしていたが、
+     カメラが増えると
+       ① 行が文字の高さ以下に潰れて読めない
+       ② 潰しきれない分は card 側の overflow:hidden で**見えない**(操作できない)
+     という状態になった(カメラ台数は無制限: views.dashboard の Camera.objects.all())。
+     そこで「少ないときは伸ばして埋める / 読める最小高さまでしか縮めない /
+     溢れたら上の共通ルールでスクロール」に切り替えた。 */
+  /* カメラ状態の一覧だけ追加で「伸ばして埋める / 読める最小高さまでしか縮めない」を行う
+     (スクロール自体は上の .mini-list 共通ルールが面倒を見る) */
   .main:has(> .stats-grid) .card:has(.status-dot) .mini-list {
     display: flex;
     flex-direction: column;
   }
   .main:has(> .stats-grid) .card:has(.status-dot) .mini-list li {
-    flex: 1 1 0;
-    min-height: 0;
+    flex: 1 1 auto;      /* 台数が少ないときは伸ばしてカードの高さに合わせる(従来どおりの見た目) */
+    min-height: 34px;    /* これ以下には縮めない=読める。必要高さが超えたらスクロールに出る */
     display: flex;
   }
   .main:has(> .stats-grid) .card:has(.status-dot) .mini-list li > .mini-list__row {
     flex: 1;
-    height: 100%;
     min-height: 0;
   }
 }
