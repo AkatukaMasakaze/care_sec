@@ -94,6 +94,15 @@
 
   {# ================= MAIN画面 ================= #}
   <main class="main">
+    {# ビューが messages.success() 等で積んだメッセージを1回だけ表示する #}
+{% if messages %}
+  <div class="flash-list">
+    {% for message in messages %}
+      {# message.tags は success / warning / info / error のいずれか → 色分けに使う #}
+      <div class="flash flash--{{ message.tags }}" role="status">{{ message }}</div>
+    {% endfor %}
+  </div>
+{% endif %}
     {% if latest_open_alert %}
       <div class="global-alert-banner" role="alert">
         🚨 異常検知: {{ latest_open_alert.kind_label }} / {{ latest_open_alert.location }}
