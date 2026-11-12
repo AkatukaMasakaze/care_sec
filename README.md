@@ -34,7 +34,27 @@ python manage.py runserver 127.0.0.1:8000
 - **py-spy** は開発venvにのみ入っている調査用ツール(アプリ動作に不要、本番では入れない)
 
 ブラウザで <http://127.0.0.1:8000/> を開く。
-ローカルネットワークからは `runserver 0.0.0.0:8000` で公開できます(防火墙設定が必要)。
+
+ローカルネットワークから使う場合は `runserver 0.0.0.0:8000` に加えて、
+**そのマシン宛てのホスト名/IPを環境変数で渡す**必要があります(次節)。
+
+## 環境変数(config/settings.py が読むもの)
+
+| 変数 | 既定 | 効果 |
+|---|---|---|
+| `CARE_SEC_SECRET_KEY` | `dev-only-not-for-production` | `SECRET_KEY`。**本番では必ず設定**し、既定値を公開リポジトリに晒した場合は必ず回す |
+| `CARE_SEC_DEBUG` | `1` (=DEBUG True) | `0` にすると DEBUG=False になる(静的ファイルは collectstatic が必要) |
+| `CARE_SEC_ALLOWED_HOSTS` | 空 | カンマ区切りの追加ホスト。**各要素の前後の空白は自動で除かれる**(先頭スペースで無効化していた過去の実測バグの再発防止)。`127.0.0.1` / `localhost` / `testserver` は常に許可 |
+| `CARE_SEC_EMAIL_HOST` / `CARE_SEC_EMAIL_PORT` / `CARE_SEC_FROM_EMAIL` | localhost / 25 / care-sec@localhost | `EMAIL_BACKEND` は既定が console(送信内容コンソール表示)。SMTPへ出したい時だけ設定する |
+
+```powershell
+# LAN からのアクセスを許可する例(このPCのIP 10.24.23.42 など)
+$env:CARE_SEC_ALLOWED_HOSTS = "10.24.23.42, .local"
+.\.venv\Scripts\python.exe manage.py runserver 0.0.0.0:8000
+```
+
+未指定で `0.0.0.0` にバインドすると、LAN IP でのアクセスは `DisallowedHost`(400)になります。
+`DEBUG=True` でも `ALLOWED_HOSTS` に値があれば**厳格に適用**される点に注意(実測)。
 
 ## ログインアカウント(デモデータ)
 

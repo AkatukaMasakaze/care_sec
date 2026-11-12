@@ -1509,3 +1509,104 @@ manage.py check → no issues
 **Piカメラ2台がまだ台帳に登録されていない**(第30章の状態変化)。
 ログを出すまで、見かけ上「検知1台」が正常に見えていました。
 
+---
+
+## 34. 2026-11-12 git push/merge で settings.py が壊れて全ページ500になった
+
+ユーザー報告: 「gitでpushして同期したのですが、settings.pyに問題があるっぽい。問題点を洗い出して修正して」
+
+### 見つけた3件
+
+**① `config/settings.py:13` が構文エラー**
+```python
+from pathlib import Path import os     # ← 2つのimportが1行に繋がっていた
+```
+→ `manage.py` の**すべて**のコマンドが起動できない。
+```python
+import os
+from pathlib import Path
+```
+に修正。`os` は環境変数読込(SECRET_KEY / DEBUG / ALLOWED_HOSTS)で必要になっていたため、
+merge時に下の行が取り込まれる形になったと見られます。
+
+**② settings.py が参照する context processor が存在しない(これが500の原因)**
+
+`config/settings.py` の `TEMPLATES.OPTIONS.context_processors` に
+`core.context_processors.asset_version` が入っているのに、
+コミット `4ede85e「AI監視 稼働中 編集」` で `core/context_processors.py` が書き換えられ、
+**`asset_version` 関数が落ちていた**。
+
+```
+ImportError: Module "core.context_processors" does not define a "asset_version" attribute/class
+```
+`manage.py check` は**通る**(context processor は描画時に解決される遅延参照)のが厄介で、
+リクエストで初めて落ちる。**全ページ500**だった。
+
+→ `asset_version` を復元しつつ、そのコミットが追加した `ai_monitor_enabled`
+(サイドバーのAI監視表示)も**残した形で両立**させた。
+
+**③ `MAILERS` という設定(Djangoに存在しない)**
+```python
+MAILERS = {"default": {"BACKEND": "django.core.mail.backends.console.EmailBackend"}}
+```
+Django に `MAILERS` は無く**黙って無視**されるため、実質 `EMAIL_BACKEND` 既定の
+SMTP(localhost:25)宛になろうとしていた。現在はメール送信コードが無いので事故っていないが、
+`DEFAULT_FROM_EMAIL` 等を足すと気づかずSMTPへ飛びます。
+→ `EMAIL_BACKEND = console` + `EMAIL_HOST/PORT/FROM_EMAIL`(環境変数対応)に修正。
+
+### settings.py の merge で入った良い変更(そのまま維持)
+| 変更 | 内容 |
+|---|---|
+| `SECRET_KEY` | 環境変数 `CARE_SEC_SECRET_KEY` から読む(既定はdev用ダミー) |
+| `DEBUG` | 環境変数 `CARE_SEC_DEBUG`(`1`が既定) |
+| `ALLOWED_HOSTS` | `CARE_SEC_ALLOWED_HOSTS` をカンマ区切りで読み、**各要素を `.strip()`** |
+| DB | `OPTIONS.timeout=30` + `connection_created` で **WAL / busy_timeout=30000** |
+
+**①の再発防止になっている点**: 以前 `ALLOWED_HOSTS` に `" 133.106.32.114"`(先頭スペース付き)が
+入っていて無効化していた実測バグ(第24章)を、`.strip()` で構造的に潰している。
+
+### 副作用として効いてくる制限(**バグではなく仕様**)
+`ALLOWED_HOSTS` に値がある場合、`DEBUG=True` でも**厳格に適用**されます(実測)。
+既定リストは `localhost / 127.0.0.1 / testserver` のみなので、
+`runserver 0.0.0.0:8000` で LAN IP(例 `10.24.23.42:8000`)からアクセスすると `DisallowedHost`(400)。
+
+```
+127.0.0.1:8000    -> OK
+localhost:8000    -> OK
+10.24.23.42:8000  -> DisallowedHost      ← 環境変数が必要
+```
+対処(README に追記済み):
+```powershell
+$env:CARE_SEC_ALLOWED_HOSTS = "10.24.23.42, .local"
+```
+
+### 検証
+```
+python -m ast 構文チェック(core/config 全体) → 0 件
+manage.py check                                → no issues
+manage.py makemigrations --check               → No changes detected
+manage.py verify_pages                         → 全ページの検証に成功
+スモークテスト(test client / 13 URL)
+  / /alerts/ /recordings/ /accounts/profile/ /accounts/settings/ /api/alerts/
+  /debug/camera/ /debug/camera/ai/ /debug/camera/readiness/
+  /debug/camera/devices/ /debug/camera/progress/ /admin/ /admin/core/alert/
+  → すべて 200(修正前は全ページ500)
+```
+
+### 「今までの修正が巻き戻っていないか」の横断検査(18項目)
+merge で失われていないかをキーワードで総点検し、**全項目存活**を確認:
+専有読取スレッド / `frame.copy()`(ヒープ破損) / `merged_devices` / `frame_age` /
+readiness 鉤とエンドポイント / `purge_media_files` / `demo_alert` /
+`asset_version` / `debug_asset_ver` / カード表示CSS / 起動準備カードとJS /
+`ai_monitor_enabled` 等。
+検査スクリプトは `%TEMP%\opencode\check_survivors.py`(次回も同じ点検ができる)。
+
+### 教訓
+- **`manage.py check` は context processor の参照先まで検証しない**。
+  settings に名前があっても関数が無いと、checkは通ってリクエストで500になる。
+  → 設定を変えたら **実際にページを1つ描画する**(verify_pages / test client)こと
+- マージで `settings.py` と `context_processors.py` の**片方だけ**変わると不整合になる。
+  両方触る変更は同じコミットに入れる
+- `MAILERS` のように**Djangoが知らない設定名は黙って無視**される。
+  効いていないように見える設定は `hasattr(settings, ...)` と公式設定名で疑う
+

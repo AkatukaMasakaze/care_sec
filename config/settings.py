@@ -10,7 +10,8 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
-from pathlib import Path import os
+import os
+from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -254,10 +255,11 @@ AI_ALERT_CAMERA_ID = None
 
 
 # Email
-# https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
-
-MAILERS = {
-    "default": {
-        "BACKEND": "django.core.mail.backends.console.EmailBackend",
-    },
-}
+# https://docs.djangoproject.com/en/6.1/topics/settings/#email
+# ※ 以前は MAILERS という設定名になっていました。Django に MAILERS は無く
+#   無視されるため、実質 SMTP(localhost:25)へ送出しようとしていたことになります。
+#   ここでは開発用に console バックエンド(送信内容をコンソールに出すだけ)を明示します。
+EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+EMAIL_HOST = os.environ.get("CARE_SEC_EMAIL_HOST", "localhost")
+EMAIL_PORT = int(os.environ.get("CARE_SEC_EMAIL_PORT", "25"))
+DEFAULT_FROM_EMAIL = os.environ.get("CARE_SEC_FROM_EMAIL", "care-sec@localhost")
