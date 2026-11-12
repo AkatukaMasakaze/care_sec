@@ -1454,3 +1454,16 @@ input:checked + .toggle-slider:before {
   .alert-card__thumb { height: 120px; }
   .filter-form label { flex: 1 1 100%; }
 }
+
+/* ---------- 操作結果メッセージ ---------- */
+.flash-list { display: grid; gap: 8px; margin-bottom: 16px; }
+.flash {
+  padding: 10px 14px;
+  border: 1px solid var(--color-border);
+  border-left: 5px solid var(--color-primary);   /* 既定(info)は青 */
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+.flash--success { border-left-color: var(--color-success); }  /* 成功 = 緑 */
+.flash--warning { border-left-color: var(--color-warn); }     /* 注意 = 橙 */
+.flash--error   { border-left-color: var(--color-danger); }   /* 失敗 = 赤 */
