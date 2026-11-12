@@ -1,6 +1,8 @@
 """CARE SEC 転倒・異常検知システム / ビュー(検証用実装)"""
+import os
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from django.contrib import messages
 from django.conf import settings as django_settings  # views.settings(設定ページ)と名前が衝突するため別名
@@ -235,6 +237,38 @@ def profile(request):
     })
 
 
+def purge_media_files():
+    """media ディレクトリ内の**ファイルをすべて削除**する(ディレクトリは残す)
+
+    「全削除」ボタンは DB のレコードしか消していなかったため、実際の録画(mp4)や
+    サムネイル(jpg)が media/ に残り続けていた。DB行を消した以上これらのファイルは
+    誰からも参照されないため、**検知データ対応かどうかに関わらず全部消す**方式にする。
+
+    注意点:
+    - `alert_thumbs` / `camera_snapshots` / `recordings` などの**ディレクトリ自体は残す**。
+      無れていると検知時の保存が失敗する(`mkdir` していない前提の箇所がある)ため。
+    - 開いているファイルの削除に失敗しても処理を止めない(Windows は他プロセスが
+      開いているファイルを消せないことがある)。件数をメッセージで返す。
+
+    戻り値: (削除できた件数, 失敗した件数, 解放に失敗したファイル名のリスト)
+    """
+    root = Path(django_settings.MEDIA_ROOT)
+    if not root.exists():
+        return 0, 0, []
+
+    deleted = 0
+    failed = []
+    for dirpath, _dirnames, filenames in os.walk(root):
+        for name in filenames:
+            target = Path(dirpath) / name
+            try:
+                target.unlink()
+                deleted += 1
+            except OSError:
+                failed.append(str(target.relative_to(root)))
+    return deleted, len(failed), failed
+
+
 @login_required
 @require_POST
 def settings(request):
@@ -249,7 +283,18 @@ def settings(request):
         AlertReport.objects.all().delete()
         Recording.objects.all().delete()
         Alert.objects.all().delete()
-        messages.success(request, "すべての検知データ・録画・解決報告を削除しました。")
+
+        # DBのレコードを消した以上、media/ の実ファイル(録画mp4・各種jpg)は
+        # 誰からも参照されなくなる。まとめて削除する(ディレクトリは残す)
+        deleted, failed, failed_names = purge_media_files()
+        detail = "media 内のファイル %d件" % deleted
+        if failed:
+            detail += "(%d件は他のプログラムが開いていて削除できませんでした: %s)" % (
+                failed, ", ".join(failed_names[:3]) + ("…" if failed > 3 else ""))
+        messages.success(
+            request,
+            "すべての検知データ・録画・解決報告と、%s を削除しました。" % detail,
+        )
 
     elif action == "toggle_ai_on":
         # AI自動検知をオンにする

@@ -86,14 +86,17 @@
     <div class="card__header">
       <h2>データ削除（管理）</h2>
     </div>
-    <form method="post" action="{% url 'settings_action' %}" onsubmit="return confirm('本当にすべての異常検知・録画・解決報告を削除しますか？この操作は元に戻せません。');">
+    <form method="post" action="{% url 'settings_action' %}" onsubmit="return confirm('本当にすべての異常検知・録画・解決報告、および media フォルダ内のファイル(録画mp4・画像)を削除しますか？この操作は元に戻せません。');">
       {% csrf_token %}
       <button type="submit" name="action" value="clear_all_data" class="btn btn--danger btn--block">
         🗑️ 全異常・録画・解決報告を削除
       </button>
       <p class="field__help">
-        全ての異常検知記録・自動録画・解決報告・人物検知履歴を削除します。<br>
-        カメラ・利用者マスタはそのまま残ります。
+        全ての異常検知記録・自動録画・解決報告を削除し、さらに
+        <strong>media フォルダ内のファイル(mp4・jpg をすべて)を削除</strong>します。<br>
+        検知データと対応していない残骸も対象です。フォルダ自体
+        (<code>alert_thumbs</code> / <code>camera_snapshots</code> / <code>recordings</code>)は残ります。<br>
+        カメラ・利用者マスタ・アカウントはそのまま残ります。
       </p>
     </form>
   </section>

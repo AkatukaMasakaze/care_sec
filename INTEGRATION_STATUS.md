@@ -1313,3 +1313,92 @@ Get-WinEvent -FilterHashtable @{LogName='Application'; Level=2} -MaxEvents 60 |
 - `0xc0000374` = ヒープ破損(native のメモリ所有権の問題。OpenCV/Driver周りを疑う)
 - `0xc0000005` = アクセス違反
 - **イベントが無いのに止まっている**なら、クラッシュではなく外部終了(シェル/OS/手動停止)
+
+---
+
+## 30. 2026-11-12 サーバーが起動しない(Django本体ファイルへのコマンド混入)
+
+`manage.py` の全コマンドが import 段階で落ちた。
+
+```
+File ".venv\Lib\site-packages\django\db\backends\utils.py", line 100
+    python manage.py migrate
+           ^^^^^^
+SyntaxError: invalid syntax
+```
+
+**venv内のDjango本体ソースに、シェルコマンドの1行がそのまま貼り込まれていた**(アプリコードは無関係)。
+
+```powershell
+# 壊れているファイルの特定
+.\.venv\Scripts\python.exe -m compileall -q .venv\Lib\site-packages\django   # → この1ファイルのみ
+# 混入行を削除 → 再チェック
+.\.venv\Scripts\python.exe -m compileall -q .venv\Lib\site-packages\django\db  # 出力なし
+.\.venv\Scripts\python.exe manage.py check                                     # no issues
+```
+
+**教訓**
+- `SyntaxError` が `.venv\Lib\site-packages\...` を指したら**環境の破坏**。アプリのせいではない
+- 確実な直し方は `pip install --force-reinstall --no-deps Django==6.1.2`
+  (`--no-deps` がないと tensorflow/mediapipe まで巻き込む)
+- **venv は git に含まれない**のでこの種の破坏は履歴から復元できない。`requirements*.txt` が唯一の再現手段
+- 起動後の実HTTP確認: `/` `/alerts/` `/recordings/` `/debug/camera/` すべて200、常時稼働 index0 = 24.8fps
+
+### 同時に気づいた状態変化(11/11 午後以降の操作由来)
+- 台帳の `stream_url` が空 → **Piカメラ(cam:9/cam:10)が未登録**で、解析対象はPC内蔵カメラのみ
+- `staff1`/`staff2` はおらず `admin` のみ
+- `login.html` の `next` は `value="/"` 直書き(404は解消。要求ページへ戻る挙動は失われている)
+
+---
+
+## 31. 2026-11-12 「全削除」ボタンで media/ の実ファイルも消す
+
+ユーザー指示: 「media に録画が溜まり続ける。全削除はDBだけ消してメディアが残る。
+**検知データ対応かどうかに関わらず media 内の画像・mp4を全部消す**方式にしてください。
+ただし media 内の**ディレクトリは消さない**でください」
+
+### 実態
+`views.settings` の `clear_all_data` は DB 行を消すだけでした。実際この日も
+`media/recordings/2026-11-12 09-48-19.mp4`(40KB)が残っているのに **DB上の録画は0件**
+= 誰からも参照されない残骸でした。
+
+### 実装(`core/views.py`)
+```python
+def purge_media_files():
+    """media ディレクトリ内のファイルをすべて削除する(ディレクトリは残す)"""
+    root = Path(django_settings.MEDIA_ROOT)
+    for dirpath, _dirnames, filenames in os.walk(root):   # ディレクトリは一切触らない
+        for name in filenames:
+            try:
+                (Path(dirpath) / name).unlink()
+            except OSError:
+                ...   # 失敗しても止めない(Windowsは開使用中のファイルを消せない)
+    return deleted, failed, failed_names
+```
+`clear_all_data` は **DB削除 → ファイル削除** の順に実行し、件数をメッセージで返す
+(「…と、media 内のファイル N件 を削除しました」。失敗時は件数と例も)。
+
+設計判断:
+- **参照の有無で絞らない**(指示どおり全部)。DB行を消した以上すべて残骸なので条件分けは無意味
+- **ディレクトリは残す**。保存側が `mkdir` 前提の箇所があり、無いと検知時の保存が失敗する
+- 削除失敗で処理を止めない(録画中のmp4など)
+
+### 検証(実 media/ は触らない)
+`override_settings(MEDIA_ROOT=一時dir)` + `transaction.atomic()` ロールバックで実行:
+```
+削除前: media直下1 / alert_thumbs2 / camera_snapshots2 / recordings2 / nested\deep1 / empty_dir0
+message: すべての検知データ・録画・解決報告と、media 内のファイル 8件 を削除しました。
+削除後: 全ディレクトリのファイル数 0
+        alert_thumbs / camera_snapshots / recordings / nested\deep / empty_dir  すべて残存 ✓
+        Alert=0 Recording=0 ✓(検証用のDB変更はロールバック済み、実mediaのmp4も無傷)
+```
+
+### ついに見つけた別不具合(修正)
+`verify_pages` が `User.objects.get(username="staff1")` 直書きで、createsuperuser 運用に
+切り替えた現状で **`User.DoesNotExist`** に陥っていた。
+→ `staff1` → 管理者 → 先頭ユーザー の順にフォールバックするよう修正(使うユーザー名も出力)。
+`verify_pages` は `clear_all_data` を叩かないので、このコマンドで実メディアは消えない。
+
+### 反映にはサーバー再起動が必要
+`--noreload` で運用しているため、`core/views.py` の変更は**再起動するまで有効になりません**。
+
