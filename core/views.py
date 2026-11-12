@@ -409,6 +409,8 @@ def api_alerts(request):
     unresolved = Alert.objects.exclude(status=Alert.Status.RESOLVED).select_related("camera", "responder")[:50]
     return JsonResponse({
         "open_count": Alert.objects.filter(status=Alert.Status.OPEN).count(),
+        # 追加: AI監視のON/OFF(サイドバー表示の更新用)
+        "ai_enabled": AISettings.load().enabled,
         "alerts": [
             {
                 "id": alert.id,

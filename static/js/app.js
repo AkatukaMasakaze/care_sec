@@ -190,6 +190,14 @@
   var initialized = false;
 
   function applyAlertData(data) {
+    // AI監視の稼働表示を、サーバーから届いた最新の状態に合わせる
+var aiDot = document.getElementById('ai-monitor-dot');
+var aiLabel = document.getElementById('ai-monitor-label');
+if (aiDot && aiLabel && typeof data.ai_enabled === 'boolean') {
+  // 緑の点(on) と 灰色の点(off) を切り替える
+  aiDot.className = 'status-dot ' + (data.ai_enabled ? 'status-dot--on' : 'status-dot--off');
+  aiLabel.textContent = data.ai_enabled ? '稼働中' : '停止中';
+}
     var openCount = data.open_count || 0;
     if (badge) { badge.textContent = openCount; }
     if (sidebarBadge) {

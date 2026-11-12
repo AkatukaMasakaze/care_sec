@@ -84,9 +84,13 @@
       </li>
       {% endif %}
     </ul>
-    <div class="sidebar__footer">
-      AI監視 <span class="status-dot status-dot--on"></span> 稼働中
-    </div>
+   <div class="sidebar__footer">
+  {# id を付けておき、ポーリング結果でも書き換えられるようにする #}
+  AI監視
+  <span id="ai-monitor-dot"
+        class="status-dot {% if ai_monitor_enabled %}status-dot--on{% else %}status-dot--off{% endif %}"></span>
+  <span id="ai-monitor-label">{% if ai_monitor_enabled %}稼働中{% else %}停止中{% endif %}</span>
+</div>
   </nav>
 
   {# ================= オーバーレイ(モバイル用) ================= #}
