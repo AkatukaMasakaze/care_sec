@@ -47,6 +47,7 @@ urlpatterns = [
     path("debug/camera/devices/", views.debug_camera_devices, name="debug_camera_devices"),
     path("debug/camera/progress/", views.debug_camera_detect_progress, name="debug_camera_detect_progress"),
     path("debug/camera/ai/", views.debug_camera_ai_status, name="debug_camera_ai_status"),
+    path("debug/camera/readiness/", views.debug_camera_readiness, name="debug_camera_readiness"),
     path("debug/camera/stream/", views.debug_camera_stream, name="debug_camera_stream"),
 ]
 

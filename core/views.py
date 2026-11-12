@@ -504,6 +504,14 @@ def debug_camera_ai_status(request):
 
 
 @login_required
+def debug_camera_readiness(request):
+    """起動準備の統合ゲージJSON(検知 + AIモデル + カメラ確保 + 初フレーム + 解析)"""
+    from . import readiness
+
+    return JsonResponse(readiness.snapshot())
+
+
+@login_required
 def debug_camera_stream(request):
     """選択デバイスのMJPEGストリーム(?device=インデックス)
 

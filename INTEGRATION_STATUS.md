@@ -1455,3 +1455,57 @@ manage.py check / verify_pages → 全通過
 **再起動するまで有効になりません**(テンプレートは `runserver` でも再読込される場合が
 ありますが、ビューのコードは再起動が必要です)。
 
+---
+
+## 33. 2026-11-12 起動準備の統合ゲージ + 準備ログを追加
+
+ユーザー指示: 「カメラ起動までしばらく時間がかかる。読み込みゲージはあるが100%になっても
+表示できない。**AIモデル準備とカメラ準備を合わせた進行ゲージ**を新たに作り、
+**簡単なログ出力**もつけてほしい」
+
+### ゲージが100%なのに映像が出ない理由
+既存のゲージ(`/debug/camera/progress/`)は **デバイス探索の進捗だけ**でした。
+実際に映像が出るまでには次が必要で、とくにモデル準備が最長です。
+
+1. カメラ検知 2. AIモデル準備(tensorflow import + Keras load + PoseLandmarker)
+3. カメラ確保 4. 初フレーム取得 5. 解析稼働
+
+### 実装
+| 場所 | 内容 |
+|---|---|
+| `core/readiness.py` **(新規)** | 5段階の重み付き進捗とログ(最大240行)。`note/model_*/camera_step/snapshot` |
+| `core/ai_engine.py` | `_load_shared`(10/55/78%の途中経過と完了秒数)、`_get_landmarker`、`_start_one`(確保秒数)、`_loop`(初フレーム・解析開始)、失敗/映像途絶 |
+| `core/apps.py` | 起動・ロック確保・自動再学習の開始/完了・カメラ未検出をログへ |
+| `core/views.py` + `config/urls.py` | `GET /debug/camera/readiness/`(login_required) |
+| `templates/debug/camera.html` | 「起動準備」カード(ゲージ / 5段階の内訳 / ログ / 折畳み) |
+| `static/js/debug_camera.js` | 1秒ポーリング(準備完了後は5秒に間引く)。ステージ変化を自動ログ |
+| `static/css/style.css` | `.ready-bar` `.ready-stage` `.ready-log` |
+
+重み: 検知15 / **AIモデル35** / カメラ確保15 / 初フレーム20 / 解析稼働15
+複数カメラは「一番進んだカメラ」をゲージに採用(1台出れば表示できるため)。
+検知が未実行でもカメラが確保済みなら検知を100%扱いにして、ゲージが100%に届かなくならないようにした。
+
+### 実測タイムライン(実サーバーを2回起動して採取)
+```
+ 0.0s 起動 → 2.0s ロック確保 → 2.0s 自動再学習確認(変更なし 0.1秒)
+ 2.2s index 3→2→1 を開いて失敗(未接続、計0.2秒) → 3.2s index 0 確保(0.8秒)
+ 3.3s モデル準備開始 → 18.4s 完了(15.1秒) → 19.3s 初フレーム → 20.8s 解析稼働 29.0fps
+ 1回目: 準備完了 21.2秒 / 2回目(キャッシュ暖かい): 準備完了 10.2秒(モデル 5.9秒)
+```
+**待時間の正体は tensorflow の import + Keras load**でした(1回15秒、2回目6秒)。
+
+### 検証
+```
+readiness の段階計算: 0 → 15 → 18.5 → 50 → 64 → 80.5 → 100%(ready=True)
+GET /debug/camera/readiness/ → HTTP 200 / keys=[cameras, elapsed, log, model, percent, ready, stages]
+デバッグページの描画: 見出し・ready-card・data-ready-url・ゲージ・ステージ・ログ・切替ボタン すべて OK
+CSS/JS の配信: .ready-bar / .ready-stage / .ready-log / pollReady / renderReady すべて OK
+最終状態: percent=100.0 ready=True / ログ24行 / 「カメラ検知 完了(1台)」
+manage.py check → no issues
+```
+
+### このログで新たに見えたこと
+`カメラ検知 完了(1台)` かつ `cameras` に index 0〜3 しか無い =
+**Piカメラ2台がまだ台帳に登録されていない**(第30章の状態変化)。
+ログを出すまで、見かけ上「検知1台」が正常に見えていました。
+
