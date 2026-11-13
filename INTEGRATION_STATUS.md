@@ -1774,3 +1774,87 @@ Django管理画面側の staff 検査も自然に `is_admin` に追随する(列
 `/accounts/settings/` の **データ全削除 / AI監視ON・OFF / 異常検知デモ** は、現在も一般介護士が
 操作できます。業務画面なので残しましたが、管理者専用にしたいなら `@admin_required` を1行足すだけです。
 
+---
+
+## 38. 2026-11-13 無人カメラのPOSE間引き(AI最適化)を実装
+
+### 背景(実測)
+工程別実測で 1枚49.6ms のうち **POSE(MediaPipe full)=31.6ms が64%**。
+人が映っていないフレームで POSE を打っても**空振り**なので、無人が続く間だけ
+「probe 秒に1回探す」に落とす最適化を入れた。スペック不足説ではなく設計問題の検証から。
+
+### 設計(config/settings.py)
+- `AI_EMPTY_CAMERA_OPTIMIZATION = True` … ゲートの総スイッチ(False で従来動作)
+- `AI_EMPTY_PROBE_SECONDS = 0.2` … 無人時のPOSE間隔(=5回/s で探索)
+- `AI_PERSON_LOST_SECONDS = 2.0` … **人が消えてから2秒はフルレート猶予**
+  (一時的な遮挡で間引きに切り替え、転倒の瞬間を取り逃すのを防ぐ)
+
+### 実装(core/ai_engine.py `_CameraRuntime._loop`)
+- ゲートは POSE の直前。`person_present=False` かつ `now - last_person_seen ≧ 猶予` のときだけ
+  `run_pose=False` で **cvtColor + detect_for_video を丸ごとスキップ**(result=None)。
+- ランドマークを拾えた瞬間に `person_present=True` / `last_person_seen=now` で即フルレート復帰。
+- 間引きフレームは既存の「NO PERSON」分岐(sequence.clear 等)に落とすだけ。
+  **有人判定中は一切間引かない**ので無動作検知・転倒判定・録画への影響はゼロ。
+- `camera_service` の読取・JPEG配信・視聴者配信は従来どおり毎フレーム(間引きはAI計算だけ)。
+
+### 可視化
+- status/summary に `person_present` / `ai_throttled` / `pose_fps`(実際にPOSEを打った回数/秒)を追加。
+- `/debug/camera/`: カードに「AI」欄(間引き中 4.9/s / 有人フル)、
+  全カメラ表に「AI間引き」列。
+
+### 検証(verify_empty_throttle.py — 偽MediaPipeで detect_for_video 呼び出し回数を計測)
+| ケース | 期待 | 実測 | 判定 |
+|---|---|---|---|
+| 無人6秒 | ≈30回 | 28回(pose_fps=4.9) | OK(従来の180回→**84%削減**) |
+| 無人3秒→人が出る | ≈100回 | 100回(復帰後28.9/s) | OK |
+| 有人2秒→消える | ≈125回 | 121回(猶予2sフル→間引き) | OK |
+| 最適化OFF | ≈175回 | 169回(全実行) | OK |
+| 間引き中に人が出る | 0.2秒以内に復帰 | person_present=True | OK |
+
+**5/5 通過。** Pi実機復帰後は `profile_ai_stage.py --device cam:9` で無人時の削減を実測すること。
+
+---
+
+## 39. 2026-11-13 「カメラが動かない」の原因はロック残骸+ゾンビ誤判定だった
+
+### 症状
+サーバー起動(~7分)後もCPU増分 +0.1s/5s(=常時解析していない)、メモリ56MB(TF未読込)。
+カメラ自体は別プロセスから開けた(8/8読める)ので **カメラ故障でも間引きの実装でもなかった**。
+
+### 原因(実測)
+`core/apps.py` のAI占有ロック `.ai_always_on.lock` に **11/12 2:20 のサーバーのPID(4388)**
+が残骸として残り、`_pid_alive()` は `OpenProcess` の成否だけ見るため、
+**終了済み・未回収のゾンビプロセスにも成功して「生存」と誤判定**した。
+結果、以後起動するすべてのサーバーが
+`[RealtimeAI] 別のサーバー(PID 4388)が既にAI常時稼働を占有しています`
+で常時稼働を開始しなかった。`Stop-Process -Force` では atexit(ロック削除)が走らないので残る。
+
+### 修正(core/apps.py)
+- `_pid_alive` → **`_process_birth(pid)`** に刷新。`GetExitCodeProcess == STILL_ACTIVE(259)`
+  まで確認し、ゾンビは「居ない」扱い。生存中は **プロセス開始時刻** を返す。
+- ロックファイルの書式を `PID 開始時刻` の2列にし、claim時に
+  ①PIDが実在 ②開始時刻が記録と一致 を両方満たすときだけ「他サーバー占有」として拒否。
+  → **PID使い回し**(ゾンビ回収後に別プロセスが同じPIDを得る)でも誤閉じ込めしない。
+- 壊れた/旧形式(PIDのみ)の残骸は takeover 可能。旧形式+PID生存は安全側で拒否(従来互換)。
+
+### 検証(実シナリオ6/6通過)
+| シナリオ | 期待 | 結果 |
+|---|---|---|
+| 死んだPIDの残骸(4388の実例) | takeover | OK |
+| 生存サーバーの正当なロック | 拒否(二重起動防止は維持) | OK |
+| 同PIDだが開始時刻違い(使い回し) | takeover | OK |
+| 旧形式「PIDのみ」+生存 | 拒否(安全側) | OK |
+| 壊れたロック | takeover | OK |
+| 自分のPIDのロック | 続行 | OK |
+
+### 今回の調査でやった後片付け
+- 4重チェーンで残っていた runserver を停止し、`--noreload` 単独で起動し直した。
+- **検証スクリプトが実DBに作り込んだ残骸を削除**: `Camera id=4「ライブカメラfake」`、
+  `Alert id=15(suspicious)` とそのRecording+mp4/jpgファイル。
+  ※`verify_empty_throttle.py` は実エンジンループを通るため `_camera_for`/`_raise_alert`
+  が台帳・アラートを書いてしまう。次回以降はそこもモックするか、実行後に掃除すること。
+
+### 運用教訓
+- 開発でサーバーを殺すときは `Stop-Process -Force` ではなく **Ctrl+C(atexitが走る)** が原則。
+  Force直後は残骸が残っても、**この修正以降は自動で takeover されるので再起動で復旧する**。
+

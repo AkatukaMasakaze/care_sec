@@ -250,6 +250,19 @@ AI_RETRAIN_EPOCHS_STATE = 50
 AI_RETRAIN_PROMOTE_MARGIN = 0.005
 # 解析レート上限(fps)。LSTM推論の都合上、高すぎると映像が間延びする
 AI_ANALYSIS_FPS = 30
+# --- 無人カメラの間引き(AI最適化) ---
+# 実測で 1枚あたり POSE=31.6ms / LSTM=10.6ms(全工程 49.6ms)で、POSE がコストの64%を占める。
+# 人が映っていないフレームで POSE を打っても**空振り**なので、無人の間は
+# 「一定間隔で探す」に落とす。人が出た瞬間にフルレートへ戻る。
+#   無人時: 1秒に AI_EMPTY_PROBE_SECONDS 回だけ POSE(既定 5回/s)
+#   有人時: 毎回 POSE(従来どおり 30fps 目標)
+# 無動作検知は「人がいて動かない」なので、有人判定中は間引かない = 既存判定に影響しない。
+AI_EMPTY_CAMERA_OPTIMIZATION = True
+# 無人時に POSE を打つ間隔(秒)。0.2 = 5fps で探索。人が現れてから最大200ms 遅れて気づく
+AI_EMPTY_PROBE_SECONDS = 0.2
+# 人が映らなくなってから**この秒数はフルレートを維持**する(一時的な遮挡・検出の
+# 不安定で間引きに切り替えると、転倒の瞬間を取り逃すため)
+AI_PERSON_LOST_SECONDS = 2.0
 # 映像を左右反転して推論・表示するか
 # 既定 False。学習データを作った collect_data.py は反転していないため、
 # 推論も反転なしで揃える(元の実験コード realtime_lstm.py は反転していた)。

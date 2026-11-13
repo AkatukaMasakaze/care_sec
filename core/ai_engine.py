@@ -313,6 +313,9 @@ class _CameraRuntime:
             "still_seconds": 0,
             "sequence_frames": 0,
             "fps": 0.0,
+            "person_present": False,
+            "ai_throttled": False,
+            "pose_fps": None,
             "frame_age": None,
             "last_alert": None,
             "recording_seconds_left": None,
@@ -469,6 +472,20 @@ class _CameraRuntime:
         frame_timestamp = 0
         prev_points = None
 
+        # --- 無人カメラの間引き(AI最適化)---
+        # 実測で POSE が 31.6ms/枚(全工程 49.6ms の64%)。人が映っていないフレームで
+        # 打っても空振りなので、無人が続く間だけ「probe 秒に1回探す」に落とす。
+        # 人が出た瞬間(=ランドマークを拾えた瞬間)にフルレートへ戻る。
+        # 無動作検知は「人がいて動かない」なので、有人判定中は一切間引かない。
+        optimize_empty = bool(getattr(settings, "AI_EMPTY_CAMERA_OPTIMIZATION", True))
+        probe_seconds = max(0.05, float(getattr(settings, "AI_EMPTY_PROBE_SECONDS", 0.2)))
+        lost_hold = max(0.0, float(getattr(settings, "AI_PERSON_LOST_SECONDS", 2.0)))
+        person_present = False       # 直近のPOSEで人が検出できたか
+        last_person_seen = None      # 最後にランドマークを拾った時刻(monotonic)
+        next_pose_at = 0.0           # 間引き中に次にPOSEを打つ時刻
+        empty_throttling = False     # UI表示用(このカメラが今間引き中か)
+        pose_count = 0               # 直近1秒ウィンドウで実際にPOSEを打った回数
+
         # AI設定(転倒閾値・無動作秒数・クールダウン)は2秒ごとに読み直す
         ai = AISettings.load()
         ai_loaded_at = started
@@ -488,6 +505,7 @@ class _CameraRuntime:
         window_start = started
         window_count = 0
         current_fps = 0.0
+        pose_fps = None            # 実際にPOSEを打った回数/秒(間引き中は 1/probe 前後)
 
         # 起動準備ゲージ用(core/readiness.py)
         got_first_frame = False
@@ -569,13 +587,41 @@ class _CameraRuntime:
                 ai_loaded_at = now
             threshold = float(ai.fall_threshold)
 
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            # MediaPipe VIDEOモードは「単調増加」のタイムスタンプを要求する。
-            # 再開時に0へ巻き戻らないよう monotonic の時刻を使い、同値も防ぐ
-            frame_timestamp = max(int(time.monotonic() * 1000), frame_timestamp + 1)
-            result = landmarker.detect_for_video(_mp_image(rgb_frame), frame_timestamp)
+            # --- 間引きゲート ---
+            # 無人が続いている間は probe_seconds に1回だけ POSE を打つ。
+            # 「人が消えてから lost_hold 秒」は猶予期間(遮挡や検出の不安定で
+            # 転倒の瞬間を取り逃さないためフルレートを維持する)。
+            run_pose = True
+            if optimize_empty and not person_present:
+                since_seen = (now - last_person_seen) if last_person_seen is not None else float("inf")
+                if since_seen >= lost_hold:
+                    if now < next_pose_at:
+                        run_pose = False
+                    else:
+                        next_pose_at = now + probe_seconds
 
-            if result.pose_landmarks:
+            # UI表示用: このカメラが今「無人間引きモード」に進入しているか
+            # (猶予期間の2秒間は still フルレートなので empty とは数えない)
+            if person_present:
+                empty_throttling = False
+            elif optimize_empty:
+                since_seen = (now - last_person_seen) if last_person_seen is not None else float("inf")
+                if since_seen >= lost_hold:
+                    empty_throttling = True
+
+            if run_pose:
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                # MediaPipe VIDEOモードは「単調増加」のタイムスタンプを要求する。
+                # 再開時に0へ巻き戻らないよう monotonic の時刻を使い、同値も防ぐ
+                frame_timestamp = max(int(time.monotonic() * 1000), frame_timestamp + 1)
+                result = landmarker.detect_for_video(_mp_image(rgb_frame), frame_timestamp)
+                pose_count += 1
+            else:
+                result = None
+
+            if result is not None and result.pose_landmarks:
+                person_present = True
+                last_person_seen = now
                 landmarks = result.pose_landmarks[0]
 
                 # 33ランドマーク × x,y,z = 99値
@@ -651,7 +697,9 @@ class _CameraRuntime:
                     danger_percent = None
                     fall_count = 0
             else:
-                # 人が映っていない
+                # 人が映っていない(または間引き中で POSE を打っていない)
+                if result is not None:
+                    person_present = False   # last_person_seen は「最後に実際に見た時刻」のまま
                 sequence.clear()
                 prev_points = None
                 fall_count = 0
@@ -741,7 +789,9 @@ class _CameraRuntime:
             window_count += 1
             if now - window_start >= 1.0:
                 current_fps = round(window_count / (now - window_start), 1)
+                pose_fps = round(pose_count / (now - window_start), 1)
                 window_start, window_count = now, 0
+                pose_count = 0
                 if current_fps > 0 and not announced_running:
                     announced_running = True
                     readiness.camera_step(
@@ -762,6 +812,10 @@ class _CameraRuntime:
                 "still_seconds": still_seconds,
                 "sequence_frames": len(sequence),
                 "fps": current_fps,
+                # AI間引きの状況: 無人が続いているカメラは POSE を 1/probe 秒間隔に落とす
+                "person_present": person_present,
+                "ai_throttled": bool(empty_throttling),
+                "pose_fps": pose_fps,
                 # 今解析しているフレームが撮像から何秒経っているか(ネットワークのみ)
                 # 0.1秒前後が正常。数秒あれば経路でフレームが積み上がっている証拠。
                 "frame_age": camera_service.frame_age_seconds(device),
@@ -1101,6 +1155,10 @@ class RealtimeAIEngine:
                     "fps": runtime.status.get("fps"),
                     "frame_age": runtime.status.get("frame_age"),
                     "still_seconds": runtime.status.get("still_seconds"),
+                    # AI間引き: 無人カメラは POSE を間引いている(pose_fps が 1/probe 秒前後になる)
+                    "person_present": runtime.status.get("person_present", False),
+                    "ai_throttled": runtime.status.get("ai_throttled", False),
+                    "pose_fps": runtime.status.get("pose_fps"),
                     "persistent": runtime.persistent,
                     # 常時稼働ぶんの自己視聴は除いて表示する
                     "viewers": max(0, runtime.viewers - (1 if runtime.persistent else 0)),

@@ -24,27 +24,64 @@ class CoreConfig(AppConfig):
         return os.environ.get("RUN_MAIN") == "true" or "--noreload" in sys.argv
 
     @staticmethod
-    def _pid_alive(pid):
-        """そのPIDが生きているか(依存ライブラリなしで判定)"""
-        import os
+    def _process_birth(pid):
+        """そのPIDの実プロセスの開始時刻を整数で返す。居なければ None
+
+        単なる「生存チェック」にしない理由が2つある:
+
+        1. Windows の OpenProcess は **終了済みだが親に回収されていないゾンビ**
+           にも成功する実測がある(強制killした runserver の残骸で、
+           次のサーバーが永久に常時稼働を始められなくなった)。
+           → GetExitCodeProcess == STILL_ACTIVE まで確認する。
+        2. ゾンビが回収された後に **同じPIDを別プロセスが使い回す**と、
+           「生き残った自分」を先代の残りかすと誤認してしまう。
+           → 開始時刻をロックファイルに書いておき、照合する。
+        """
         import platform
 
         if platform.system() == "Windows":
             import ctypes
 
             PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-            handle = ctypes.windll.kernel32.OpenProcess(
+            STILL_ACTIVE = 259
+
+            class FILETIME(ctypes.Structure):
+                _fields_ = [("dwLowDateTime", ctypes.c_uint32),
+                            ("dwHighDateTime", ctypes.c_uint32)]
+
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.OpenProcess(
                 PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid)
             )
             if not handle:
-                return False
-            ctypes.windll.kernel32.CloseHandle(handle)
-            return True
+                return None
+            try:
+                exit_code = ctypes.c_uint32(0)
+                if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                    return None
+                if exit_code.value != STILL_ACTIVE:
+                    return None  # ゾンビ(終了済み・未回収)は居ないもの扱い
+                creation = FILETIME()
+                others = FILETIME()
+                if not kernel32.GetProcessTimes(
+                    handle, ctypes.byref(creation), ctypes.byref(others),
+                    ctypes.byref(others), ctypes.byref(others),
+                ):
+                    return None
+                return (creation.dwHighDateTime << 32) | creation.dwLowDateTime
+            finally:
+                kernel32.CloseHandle(handle)
+
+        import os
         try:
             os.kill(int(pid), 0)
         except OSError:
-            return False
-        return True
+            return None
+        try:  # /proc があれば開始時刻を拾う(無い環境では 1 = 生存だけ返す)
+            stat = open(f"/proc/{int(pid)}/stat", encoding="ascii").read().split()
+            return int(stat[21])
+        except (OSError, IndexError, ValueError):
+            return 1
 
     @classmethod
     def _claim_ai_lock(cls):
@@ -52,6 +89,13 @@ class CoreConfig(AppConfig):
 
         別プロセスがカメラを掴んでいると、もう一方はカメラを開こうとして
         約60秒ハングし、Webアプリごと応答を失う。それを防ぐ。
+
+        中身は「PID 開始時刻」の2列。PIDだけでは、
+        ① 強制kill後のゾンビ(OpenProcessが成功してしまう)や
+        ② ゾンビ回収後に同じPIDを別プロセスが使い回すケース
+        で「死んでいる先代を生きている」と誤認し、以後すべてのサーバーが
+        常時稼働を開始できない(実測: カメラが永久に動かない)ため、
+        開始時刻まで照合する。
         """
         import atexit
         import os
@@ -59,22 +103,33 @@ class CoreConfig(AppConfig):
         from django.conf import settings
 
         lock = Path(settings.BASE_DIR) / ".ai_always_on.lock"
+        my_birth = cls._process_birth(os.getpid())
         try:
             if lock.exists():
-                other = int((lock.read_text(encoding="utf-8").strip() or "0"))
-                if other and other != os.getpid() and cls._pid_alive(other):
-                    print(
-                        f"[RealtimeAI] 別のサーバー(PID {other})が既にAI常時稼働を占有しています。"
-                        "このプロセスでは常時稼働を開始しません。runserver の二重起動を止めてください。"
-                    )
-                    return False
-            lock.write_text(str(os.getpid()), encoding="utf-8")
+                parts = (lock.read_text(encoding="utf-8") or "").split()
+                other = int(parts[0]) if parts and parts[0].isdigit() else 0
+                other_birth = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+                if other and other != os.getpid():
+                    live_birth = cls._process_birth(other)
+                    if live_birth is not None and (
+                        other_birth is None or live_birth == other_birth
+                    ):
+                        print(
+                            f"[RealtimeAI] 別のサーバー(PID {other})が既にAI常時稼働を占有しています。"
+                            "このプロセスでは常時稼働を開始しません。runserver の二重起動を止めてください。"
+                        )
+                        return False
+                    if live_birth is not None:
+                        # 同じPIDで開始時刻が違う = PIDの使い回し。この残骸は無関係
+                        print(f"[RealtimeAI] ロック残骸(PID {other})は別プロセスに再利用済みでした。")
+            lock.write_text(f"{os.getpid()} {my_birth or 0}", encoding="utf-8")
         except (OSError, ValueError):
             return True  # ロックを触れない環境では従来どおり起動する
 
         def _release():
             try:
-                if lock.exists() and lock.read_text(encoding="utf-8").strip() == str(os.getpid()):
+                mine = lock.read_text(encoding="utf-8").split() if lock.exists() else []
+                if mine[:2] == [str(os.getpid()), str(my_birth or 0)]:
                     lock.unlink()
             except OSError:
                 pass

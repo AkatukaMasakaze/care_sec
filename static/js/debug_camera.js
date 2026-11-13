@@ -163,7 +163,7 @@
 
       var meta = document.createElement("div");
       meta.className = "camera-card__meta";
-      ["判定", "状態", "解析fps", "遅延", "無動作", "視聴"].forEach(function (label) {
+      ["判定", "状態", "解析fps", "AI", "遅延", "無動作", "視聴"].forEach(function (label) {
         var box = document.createElement("span");
         box.appendChild(document.createTextNode(label + " "));
         var key = document.createElement("b");
@@ -318,6 +318,19 @@
       }
       f["状態"].textContent = row.state || "-";
       f["解析fps"].textContent = row.fps ? row.fps + " fps" : "-";
+      // AI間引き: 無人カメラは POSE を 1/probe 秒間隔に落としている(=人の探索だけ実行)
+      if (f["AI"]) {
+        if (row.ai_throttled) {
+          f["AI"].textContent = "間引き中 " + (row.pose_fps === null || row.pose_fps === undefined ? "-" : row.pose_fps) + "/s";
+          f["AI"].className = "is-warn";
+        } else if (row.person_present) {
+          f["AI"].textContent = "有人フル";
+          f["AI"].className = "is-ok";
+        } else {
+          f["AI"].textContent = "-";
+          f["AI"].className = "";
+        }
+      }
       f["無動作"].textContent = (row.still_seconds === null || row.still_seconds === undefined)
         ? "-" : row.still_seconds + "秒";
       f["視聴"].textContent = row.viewers ? row.viewers + "人" : "-";
@@ -739,6 +752,14 @@
         cell((row.fps || 0) + " fps(低速/帯域不足)", "is-warn");
       } else {
         cell(row.fps ? row.fps + " fps" : "-");
+      }
+      // AI間引き: 無人が続くカメラは POSE を 1/probe 秒間隔に落とす(有人/猶予中はフル)
+      if (row.ai_throttled) {
+        cell("間引き " + (row.pose_fps === null || row.pose_fps === undefined ? "-" : row.pose_fps) + "/s", "is-warn");
+      } else if (row.phase === "running" && row.person_present) {
+        cell("有人フル", "is-ok");
+      } else {
+        cell("-");
       }
       cell(delayLabel(row.frame_age), delayTone(row.frame_age));
       cell(row.still_seconds !== undefined && row.still_seconds !== null ? row.still_seconds + "秒" : "-");
