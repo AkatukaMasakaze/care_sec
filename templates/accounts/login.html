@@ -27,8 +27,8 @@
 
   <form method="post" action="{% url 'login' %}" novalidate>
     {% csrf_token %}
-    {% comment %} <input type="hidden" name="next" value="{{ next|default:'/dev/var6/' }}"> {% endcomment %}
-    <input type="hidden" name="next" value="/">
+    {% comment %} <input type="hidden" name="next" value="{{ next|default:'/dev/var6' }}"> {% endcomment %}
+    <input type="hidden" name="next" value="{{ next }}">
 
 
     <div class="field">
