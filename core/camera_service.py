@@ -202,9 +202,10 @@ def _probe_range(os_count=None):
 
 def _capture_info(cap, index, backend_name=None):
     """開いたキャプチャから解像度等の情報を取り出す"""
-    height, width = cap.get(3), cap.get(4)  # CAP_PROP_FRAME_WIDTH / HEIGHT
+    width, height = cap.get(3), cap.get(4)  # CAP_PROP_FRAME_HEIGHT / WIDTH
     fps = cap.get(5)  # CAP_PROP_FPS(取得できない backend では負値になる)
     return {
+        "format": _fourcc_name(cap),
         "index": index,
         "name": f"カメラ {index}",
         "width": int(width) if width else None,
@@ -242,43 +243,91 @@ def _backends(cv2):
         return [("DSHOW", cv2.CAP_DSHOW), ("MSMF", cv2.CAP_MSMF)]
     return [("既定", cv2.CAP_ANY)]
 
+def _fourcc_name(cap):
+    """キャプチャの取り込み形式(FOURCC)を文字列で返す(取れなければ None)"""
+    try:
+        value = int(cap.get(6))   # 6 = CAP_PROP_FOURCC。形式名が4文字ぶんの数値で返る
+    except Exception:
+        return None
+    if value <= 0:
+        return None
+    # 数値を1バイトずつ取り出して文字に戻す(例: "MJPG" / "YUY2")
+    name = "".join(chr((value >> (8 * i)) & 0xFF) for i in range(4))
+    return name if name.isprintable() and name.strip() else None
 
-def _open_capture(cv2, index, first_frame_seconds=None):
+
+def _apply_compressed_format(cv2, cap):
+    """取り込みを圧縮形式(既定 MJPG)へ切り替える。切り替わったら True"""
+    wanted = str(getattr(settings, "AI_CAMERA_FOURCC", "MJPG") or "").strip().upper()
+    if len(wanted) != 4:          # "" など4文字でない設定 = 切り替えない
+        return False
+    try:
+        # 形式 → 解像度の順に指定する(逆にすると形式が元に戻ることがある)
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*wanted))
+        width = int(getattr(settings, "AI_CAMERA_WIDTH", 640) or 0)
+        height = int(getattr(settings, "AI_CAMERA_HEIGHT", 480) or 0)
+        if width > 0 and height > 0:
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        # fps は指定しない(指定後に 1fps へ落ちる仮想カメラがあったため)
+    except Exception:
+        return False
+    # set() は非対応でも True を返すことがある。実際の形式を読み直して確かめる
+    return (_fourcc_name(cap) or "").upper() == wanted
+
+def _open_capture(cv2, index, first_frame_seconds=None, compressed=False):
     """インデックスを順に開き、フレームを読めた (cap, backend名, frame) を返す
 
     どれでも読めなければ (None, None, None)。
     「開けるが映像が無い」場合は (None, None, "blocked") を返す。
-
-    first_frame_seconds: 初フレームを待つ上限秒数。
-      他カメラと同時運用になると帯域の都合で初フレームが極端に遅くなる
-      (実測: 2台目は約1秒間隔でしかフレームが来ない)ため、
-      配信用の acquire では長めに待つ必要がある。
+    compressed: True なら圧縮形式(MJPG)での取り込みを先に試す(配信・解析用)。
     """
     params = _open_params(cv2)
     if first_frame_seconds is None:
         first_frame_seconds = float(getattr(settings, "AI_CAMERA_FIRST_FRAME_SECONDS", 3.0))
-    blocked = False
-    for backend_name, backend in _backends(cv2):
+
+    def open_one(backend):
         try:
-            cap = cv2.VideoCapture(index, backend, params) if params else cv2.VideoCapture(index, backend)
-        except Exception:  # noqa: BLE001 -パラメータ非対応の環境では素で開く
-            cap = cv2.VideoCapture(index, backend)
-        if not cap.isOpened():
-            cap.release()
-            continue
-        deadline = time.monotonic() + first_frame_seconds
-        frame = None
+            return cv2.VideoCapture(index, backend, params) if params else cv2.VideoCapture(index, backend)
+        except Exception:   # タイムアウト指定に対応していない環境では指定なしで開く
+            return cv2.VideoCapture(index, backend)
+
+    def first_frame(cap, seconds):
+        # 最初の1枚が読めるまで、上限秒数まで待つ
+        deadline = time.monotonic() + seconds
         while True:
             ok, frame = cap.read()
             if ok and frame is not None:
-                return cap, backend_name, frame
+                return frame
             if time.monotonic() >= deadline:
-                break
+                return None
             time.sleep(0.1)
-        cap.release()
-        blocked = True  # 開けたが映像が無い
-    return None, None, "blocked" if blocked else None
 
+    blocked = False
+    for backend_name, backend in _backends(cv2):
+        cap = open_one(backend)
+        if not cap.isOpened():
+            cap.release()
+            continue
+        if compressed:
+            frame = None
+            if _apply_compressed_format(cv2, cap):
+                frame = first_frame(cap, min(first_frame_seconds, 4.0))
+                if frame is not None:
+                    return cap, backend_name, frame   # MJPG で映像が取れた
+            # MJPG に非対応、または映像が来ない → 開き直して従来の形式で使う。
+            # 設定が中途半端に残ると fps が落ちるカメラがあるため、必ず開き直す
+            cap.release()
+            cap = open_one(backend)
+            if not cap.isOpened():
+                cap.release()
+                continue
+        frame = first_frame(cap, first_frame_seconds)
+        if frame is not None:
+            return cap, backend_name, frame
+        cap.release()
+        blocked = True   # 開けたが映像が無い
+    return None, None, "blocked" if blocked else None
 
 def _probe(index, cv2):
     """インデックスを開いて1フレーム読めるバックエンドを探す
@@ -909,9 +958,12 @@ def acquire(index):
     # MSMF で映像を返さないカメラも別バックエンドで取れるため総当たりする(ロック外)。
     # 配信開始の待ち合わせは長めにし、2台目(帯域が遅いカメラ)も起動できるようにする。
     patience = float(getattr(settings, "AI_CAMERA_OPEN_SECONDS", 10.0))
-    cap, backend_name, frame = _open_capture(cv2, index, first_frame_seconds=patience)
+    cap, backend_name, frame = _open_capture(cv2, index, first_frame_seconds=patience, compressed=True)
     if cap is None:
         return False
+    # 実際に決まった形式をサーバーのログに出す(MJPG になったかをここで確認する)
+    print(f"[Camera:{index}] 取り込み形式: {_fourcc_name(cap) or '不明'} / {backend_name}"
+          f" / {int(cap.get(3))}x{int(cap.get(4))}")
     with _streams_lock:
         existing = _streams.get(index)
         if existing is not None:

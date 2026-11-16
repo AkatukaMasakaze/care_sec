@@ -52,6 +52,10 @@
     var size = device.width && device.height ? device.width + "×" + device.height : "解像度不明";
     var fps = device.fps ? " / " + device.fps + "fps" : "";
     var backend = device.backend ? " / " + device.backend : "";
+
+    // 追加: 取り込み形式(例: 640×480 / 30fps / DSHOW / MJPG)
+    if (device.format) { backend += " / " + device.format; }
+
     var inUse = device.in_use ? " / 配信中" : "";
     var url = device.url ? " / " + device.url : "";
     return size + fps + backend + inUse + url;

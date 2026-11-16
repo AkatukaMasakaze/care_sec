@@ -208,6 +208,14 @@ AI_STARVED_RETRY_SECONDS = 60
 #   2台目を開くと帯域の都合で初フレームが約1秒後になるため、短すぎると起動失敗になる(実測)
 AI_CAMERA_FIRST_FRAME_SECONDS = 3.0   # 検知用
 AI_CAMERA_OPEN_SECONDS = 10.0         # 配信・常時稼働用
+
+# USBカメラの取り込み形式。MJPG = 圧縮(帯域が小さい)
+# "" にすると切り替えを行わず、修正前と同じ動きになる
+AI_CAMERA_FOURCC = "MJPG"
+# MJPG に切り替えるときに指定する解像度(学習データと同じ 640×480)
+AI_CAMERA_WIDTH = 640
+AI_CAMERA_HEIGHT = 480
+
 # /debug/camera/ のライブ配信が、フレームを1つも取得できずに続ける上限秒数
 # (1fpsの低速カメラやモデル読込中は「一時的にフレーム無し」が普通なので切らない)
 AI_STREAM_IDLE_SECONDS = 60
