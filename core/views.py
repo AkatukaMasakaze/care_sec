@@ -541,6 +541,7 @@ def api_alerts(request):
         "alerts": [
             {
                 "id": alert.id,
+                "kind": alert.kind,
                 "kind_label": alert.kind_label,
                 "status": alert.status,
                 "status_label": alert.status_label,
@@ -548,6 +549,9 @@ def api_alerts(request):
                     alert.responder.get_full_name() or alert.responder.username
                 ) if alert.responder else None,
                 "location": alert.location,
+                "camera_name": alert.camera.name,
+                # エポックミリ秒。JS側で「検知 from X秒」や通知の timestamp に使う
+                "occurred_ms": int(alert.occurred_at.timestamp() * 1000),
             }
             for alert in unresolved
         ],

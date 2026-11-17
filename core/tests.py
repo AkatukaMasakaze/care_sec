@@ -6,6 +6,8 @@
   - 報告は入力専用ページ `/reports/<異常ID>/` だけに表示される(入口は異常詳細)
   - 報告保存後は異常詳細へ戻る
 """
+import json
+
 from django.test import TestCase
 from django.utils import timezone
 
@@ -202,6 +204,30 @@ class ProfileAndReportSplitTest(TestCase):
         # 入力済みなら報告ページも開けない(詳細へ)
         res3 = self.client.get("/reports/%d/" % self.alert.id)
         self.assertRedirects(res3, "/alerts/%d/" % self.alert.id)
+
+    def test_api_alerts_payload_fields(self):
+        """app.js の大判通知が必要とするフィールドが揃っていること
+
+        api_alerts は「未解決のみ」を返すので、このテスト用に未対応を作る
+        (setUpTestData の self.alert は解決済みで一覧から除外される)
+        """
+        open_alert = Alert.objects.create(
+            kind=Alert.Kind.FALL, status=Alert.Status.OPEN,
+            camera=self.camera, occurred_at=timezone.now(),
+        )
+        self.client.force_login(self.nurse)
+        res = self.client.get("/api/alerts/")
+        self.assertEqual(res.status_code, 200)
+        payload = json.loads(res.content.decode("utf-8"))
+        self.assertIn("open_count", payload)
+        self.assertIn("ai_enabled", payload)
+        entry = [a for a in payload["alerts"] if a["id"] == open_alert.id][0]
+        for key in ("kind", "kind_label", "status", "status_label",
+                    "responder_name", "location", "camera_name", "occurred_ms"):
+            self.assertIn(key, entry, key + " が無い")
+        self.assertEqual(entry["kind"], "fall")
+        self.assertIsInstance(entry["occurred_ms"], int)
+        open_alert.delete()
 
     # ---------- 遷移のつながり ----------
     def test_resolve_redirects_to_report_page(self):

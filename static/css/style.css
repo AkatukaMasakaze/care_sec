@@ -1603,3 +1603,74 @@ input:checked + .toggle-slider:before {
   gap: 10px;
   margin-top: 14px;
 }
+
+/* ---------- 大判異常バナー(リアルタイム通知 2026-11-17 再設計) ---------- */
+#alert-banner-root {
+  position: fixed;
+  top: calc(var(--topbar-h) + 14px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 300;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(680px, calc(100vw - 24px));
+  pointer-events: none;   /* 隙間クリックで裏の操作を止めない */
+}
+#alert-banner-root > * { pointer-events: auto; }
+
+.alert-banner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: #fff;
+  border: 3px solid var(--color-danger);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(179, 38, 30, 0.35);
+  padding: 16px 20px;
+  animation: alert-drop 0.35s ease-out;
+  transition: opacity 0.28s, transform 0.28s;
+}
+.alert-banner--fall {
+  animation: alert-drop 0.35s ease-out, alert-blink 1.2s ease-in-out infinite;
+}
+.alert-banner.is-leaving {
+  opacity: 0;
+  transform: translateY(-14px);
+}
+.alert-banner__icon { font-size: 34px; line-height: 1; flex: none; }
+.alert-banner__body { flex: 1 1 auto; min-width: 0; }
+.alert-banner__title {
+  margin: 0;
+  font-size: 21px;
+  font-weight: 800;
+  color: var(--color-danger);
+}
+.alert-banner__title b { font-size: 25px; }
+.alert-banner__meta { margin: 2px 0 0; font-size: 14px; color: #3c434b; }
+.alert-banner__who { margin: 2px 0 0; font-size: 13px; color: var(--color-muted); }
+.alert-banner__actions {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: none;
+}
+.alert-banner__cta { font-size: 15px; padding: 10px 16px; }
+
+@keyframes alert-drop {
+  from { transform: translateY(-28px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+@keyframes alert-blink {
+  0%, 100% { box-shadow: 0 12px 32px rgba(179, 38, 30, 0.35); }
+  50% { box-shadow: 0 0 0 8px rgba(179, 38, 30, 0.22), 0 12px 32px rgba(179, 38, 30, 0.35); }
+}
+
+@media (max-width: 560px) {
+  .alert-banner { flex-wrap: wrap; padding: 12px 14px; }
+  .alert-banner__actions { margin-left: 0; width: 100%; flex-direction: row; }
+  .alert-banner__actions .btn { flex: 1; }
+  .alert-banner__title { font-size: 18px; }
+  .alert-banner__title b { font-size: 21px; }
+}
