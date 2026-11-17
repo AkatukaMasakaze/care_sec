@@ -22,8 +22,13 @@ urlpatterns = [
          name="login"),
     path("accounts/logout/", views.logout_view, name="logout"),
     path("accounts/profile/", views.profile, name="profile"),
+    path("accounts/profile/edit/", views.profile_edit, name="profile_edit"),
+    path("accounts/profile/update/", views.profile_update, name="profile_update"),
     path("accounts/settings/", views.settings_page, name="settings"),
     path("accounts/settings/action/", views.settings, name="settings_action"),
+
+    # 解決報告(入力専用ページ。報告を入力するシーンだけを表示する)
+    path("reports/<int:alert_id>/", views.report_page, name="report_page"),
     path("reports/create/", views.report_create, name="report_create"),
 
 

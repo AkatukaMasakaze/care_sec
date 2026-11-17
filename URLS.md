@@ -16,12 +16,15 @@
 | `/` | `dashboard` | GET | ダッシュボード(全体まとめ) | `dashboard.html` |
 | `/accounts/login/` | `login` | GET/POST | ログイン | `accounts/login.html` |
 | `/accounts/logout/` | `logout` | POST | ログアウト | `accounts/logout.html` |
-| `/accounts/profile/` | `profile` | GET | プロフィール+解決報告入力 | `accounts/profile.html` |
-| `/reports/create/` | `report_create` | POST | 解決報告の保存 | (profileへリダイレクト) |
+| `/accounts/profile/` | `profile` | GET | プロフィール(情報+統計+履歴。**編集・報告入力どちらもしない**) | `accounts/profile.html` |
+| `/accounts/profile/edit/` | `profile_edit` | GET | プロフィール編集**専用ページ** | `accounts/profile_edit.html` |
+| `/accounts/profile/update/` | `profile_update` | POST | プロフィール編集の保存 | (profileへリダイレクト/メールエラー時は編集ページを再表示) |
+| `/reports/<int:alert_id>/` | `report_page` | GET | 解決報告の**入力専用ページ**(入口は異常詳細) | `reports/form.html` |
+| `/reports/create/` | `report_create` | POST | 解決報告の保存 | (異常詳細へリダイレクト) |
 
 | `/alerts/` | `alert_list` | GET | 異常検知タブ(`?status=open` 等でフィルタ) | `alerts/list.html` |
 | `/alerts/<int:alert_id>/respond/` | `alert_respond` | POST | 「対応する」= 自分が対応者になる | (alert_listへリダイレクト) |
-| `/alerts/<int:alert_id>/resolve/` | `alert_resolve` | POST | 「解決」= 解決済みにして報告入力へ | (profileへリダイレクト) |
+| `/alerts/<int:alert_id>/resolve/` | `alert_resolve` | POST | 「解決」= 解決済みにして報告入力専用ページへ | (reports/<id>へリダイレクト) |
 | `/recordings/` | `recording_list` | GET | 自動録画の一覧(`?kind=fall` 等でフィルタ) | `recordings/list.html` |
 | `/recordings/<int:recording_id>/` | `recording_detail` | GET | 録画再生(検知マークジャンプ付き) | `recordings/detail.html` |
 | `/api/alerts/` | `api_alerts` | GET | 異常ポーリング用JSON(リアルタイム通知) | なし(JSON) |
@@ -77,6 +80,9 @@ urlpatterns = [
          auth_views.LogoutView.as_view(template_name='accounts/logout.html'),
          name='logout'),
     path('accounts/profile/', views.profile, name='profile'),
+    path('accounts/profile/edit/', views.profile_edit, name='profile_edit'),
+    path('accounts/profile/update/', views.profile_update, name='profile_update'),
+    path('reports/<int:alert_id>/', views.report_page, name='report_page'),
     path('reports/create/', views.report_create, name='report_create'),
 
 
@@ -104,9 +110,13 @@ urlpatterns = [
 
 - `alert_respond`: POSTのみ許可。`alert.responder = request.user; alert.status = 'responding'` で保存し `alert_list` へリダイレクト。
 - `alert_resolve`: POSTのみ許可かつ `alert.responder == request.user` のみ。`alert.status = 'resolved'` にして
-  `redirect(f'/accounts/profile/?alert={alert.id}')` でプロフィール(報告フォーム)へ飛ばす。
-- `profile`: `request.GET.get('alert')` があれば `target_alert` として渡す(自分が対応者で未報告のものに限る)。
-- `report_create`: POSTを保存後、`profile` へリダイレクト。
+  `redirect('report_page', alert_id=alert.id)` で**報告入力専用ページ**へ飛ばす(プロフィールには飛ばさない)。
+- `report_page`: GETのみ。**解決済み & 自分が対応者 & 未報告**の異常だけ開ける。条件外は `alert_detail` へ戻す。
+  ページには対象異常の情報と報告フォームのみを表示する(履歴などは出さない)。
+- `profile`: 自分の情報+統計+「これまでに対応した異常」の時系列+提出報告一覧。**編集フォームも報告フォームも置かない**(画面内編集パネルは1画面固定レイアウトと衝突してスクロール不能になったため2026-11-17に別ページ化)。編集は `/accounts/profile/edit/` へのリンクだけ。
+- `profile_update`: POSTで氏名/メールは `User`、施設/役職/電話は `UserProfile` に保存し `profile` へ。
+- `report_create`: POSTを保存後、**`alert_detail` へリダイレクト**(保存した内容を確認できる場所)。
+  既に報告がある異常は `report` プロパティで弾く(`AlertReport.alert` は OneToOne)。
 - `api_alerts`: 下記JSONを返す(認証必須)。
 
 ```json
@@ -169,13 +179,20 @@ urlpatterns = [
 | `alerts` | `id / kind_label / occurred_at / camera_name / location / status / status_label / responder(User\|None) / thumbnail_url / recording_id` |
 | `current_status` | 現在のフィルタ文字列(`'' / 'open' / 'responding' / 'resolved'`) |
 
-### accounts/profile.html
+### accounts/profile.html(プロフィール=情報と履歴のページ)
 | 変数 | 内容 |
 |---|---|
-| `profile` | dict: `role / facility / resolved_count`(任意。無くても表示は崩れません) |
-| `target_alert` | 報告対象の異常(`resolve` 後のリダイレクト時)。`recording_id` も使用 |
+| `profile_info` | `UserProfile`(`job_title / facility / phone / updated_at`。氏名とメールは `user` 本体) |
+| `stats` | dict: `handled_total / resolved_total / false_positive_total / reports_total / handled_month / report_pending` |
+| `timeline` | 自分が対応者になった異常の直近20件(`occurred_at / kind_label / status / status_label / camera_name / location / report`)。`report` があれば「報告を見る」、解決済み未報告なら「報告を入力」ボタン(`report_page` へ) |
+| `my_reports` | 自分の提出報告一覧(読む専用テーブル): `created_at / alert.kind_label / resident_name / physical_issue / physical_issue_label / action_taken / comment` |
+
+### reports/form.html(解決報告の入力専用ページ)
+| 変数 | 内容 |
+|---|---|
+| `target_alert` | 対象異常(`resolve` 後 or 異常詳細の「報告を入力」から)。`recording_id` も使用 |
 | `residents` | 利用者リスト: `id / name / room_number`(報告フォームの選択肢) |
-| `my_reports` | 自分の報告履歴: `created_at / alert.kind_label / resident_name / physical_issue / physical_issue_label / action_taken / comment` |
+| (共通) | フォーム自体は `includes/report_form.html` を include(POST先は `report_create`) |
 
 ### recordings/list.html / detail.html
 | 変数 | 内容 |

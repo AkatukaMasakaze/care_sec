@@ -18,7 +18,7 @@ from django.contrib.auth.models import Group
 from django.shortcuts import render
 
 from .models import (
-    AISettings, Alert, AlertReport, Camera, Recording, Resident, User,
+    AISettings, Alert, AlertReport, Camera, Recording, Resident, User, UserProfile,
 )
 from .permissions import is_admin
 
@@ -163,6 +163,12 @@ class CareWorkerAdmin(BaseModelAdmin):
 
 
 # ================= 業務データ =================
+@admin.register(UserProfile, site=admin_site)
+class UserProfileAdmin(BaseModelAdmin):
+    list_display = ("user", "job_title", "facility", "phone", "updated_at")
+    search_fields = ("user__username", "user__last_name", "user__first_name", "facility")
+
+
 @admin.register(Resident, site=admin_site)
 class ResidentAdmin(BaseModelAdmin):
     list_display = ("name", "room_number", "created_at")

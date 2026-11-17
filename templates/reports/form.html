@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block title %}解決報告の入力{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>解決報告の入力</h1>
+  <p class="page-header__sub">このページは報告を入力するときだけ使います。保存すると異常詳細に戻ります</p>
+</div>
+
+<section class="card report-page">
+  <div class="card__header">
+    <h2>対象の異常 #{{ target_alert.id }}</h2>
+    <span class="chip chip--{{ target_alert.status }}">{{ target_alert.status_label }}</span>
+  </div>
+  <div class="report-target">
+    <strong>{{ target_alert.kind_label }}</strong> /
+    {{ target_alert.occurred_at|date:"Y/m/d H:i:s" }} /
+    {{ target_alert.camera_name }}{% if target_alert.location %} / {{ target_alert.location }}{% endif %}
+    {% if target_alert.recording_id %}
+      <a href="{% url 'recording_detail' target_alert.recording_id %}" class="link">🎞 録画を確認</a>
+    {% endif %}
+    <a href="{% url 'alert_detail' target_alert.id %}" class="link">📄 異常詳細</a>
+  </div>
+
+  <div class="card__header card__header--sub">
+    <h3>報告内容</h3>
+  </div>
+  {% include "includes/report_form.html" %}
+
+  <p class="report-page__cancel">
+    <a href="{% url 'alert_detail' target_alert.id %}" class="btn btn--ghost btn--sm">← 入力せず異常詳細へ戻る</a>
+  </p>
+</section>
+{% endblock %}

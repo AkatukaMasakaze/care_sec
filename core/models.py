@@ -85,6 +85,37 @@ class User(AbstractBaseUser):
         return True
 
 
+class UserProfile(models.Model):
+    """プロフィールページ用の所属情報
+
+    氏名とメールアドレスは User 本体に持たせ、施設・役職・電話はこのモデルで持つ。
+    (以前はプロフィール画面に「介護スタッフ/さくら介護施設」を固定値で表示していたが、
+    各自で編集できるようにしてプロフィールページを本来の情報ページにする)
+    """
+
+    user = models.OneToOneField(
+        User, verbose_name="ユーザー", on_delete=models.CASCADE, related_name="user_profile",
+    )
+    facility = models.CharField("所属施設", max_length=64, blank=True, default="さくら介護施設")
+    job_title = models.CharField("役職", max_length=32, blank=True, default="介護スタッフ")
+    phone = models.CharField("連絡先電話", max_length=32, blank=True)
+    updated_at = models.DateTimeField("更新日", auto_now=True)
+
+    class Meta:
+        verbose_name = "プロフィール"
+        verbose_name_plural = "プロフィール"
+        default_permissions = ()
+
+    def __str__(self):
+        return f"{self.user.username} のプロフィール"
+
+    @classmethod
+    def for_user(cls, user):
+        """無ければ既定値で作って返す(ページ表示を失敗させない)"""
+        profile, _created = cls.objects.get_or_create(user=user)
+        return profile
+
+
 class PersonState(models.TextChoices):
     """AIが推定する人物の状態"""
     STANDING = "standing", "立っている"

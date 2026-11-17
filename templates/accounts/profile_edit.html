@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block title %}プロフィールの編集{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>プロフィールの編集</h1>
+  <p class="page-header__sub">氏名・連絡先・所属を直せます(履歴はプロフィールから)</p>
+</div>
+
+{% if form_error %}
+  <p class="form-error-banner">{{ form_error }}(他の項目は保存済みです。メールだけ直して再保存してください)</p>
+{% endif %}
+
+<section class="card">
+  <form method="post" action="{% url 'profile_update' %}" class="report-form">
+    {% csrf_token %}
+    <div class="field field--pair">
+      <div>
+        <label for="id_last_name">姓</label>
+        <input type="text" name="last_name" id="id_last_name" maxlength="50"
+               value="{{ user.last_name }}" placeholder="山田">
+      </div>
+      <div>
+        <label for="id_first_name">名</label>
+        <input type="text" name="first_name" id="id_first_name" maxlength="50"
+               value="{{ user.first_name }}" placeholder="太郎">
+      </div>
+    </div>
+    <div class="field">
+      <label for="id_email">メールアドレス</label>
+      {% if form_error %}
+        <input type="email" name="email" id="id_email" value="{{ form_email }}" placeholder="taro.yamada@example.com">
+      {% else %}
+        <input type="email" name="email" id="id_email" value="{{ user.email }}" placeholder="taro.yamada@example.com">
+      {% endif %}
+    </div>
+    <div class="field field--pair">
+      <div>
+        <label for="id_facility">所属施設</label>
+        <input type="text" name="facility" id="id_facility" maxlength="64" value="{{ profile_info.facility }}">
+      </div>
+      <div>
+        <label for="id_job_title">役職</label>
+        <input type="text" name="job_title" id="id_job_title" maxlength="32" value="{{ profile_info.job_title }}">
+      </div>
+    </div>
+    <div class="field">
+      <label for="id_phone">連絡先電話</label>
+      <input type="tel" name="phone" id="id_phone" maxlength="32" value="{{ profile_info.phone }}"
+             placeholder="例: 090-1234-5678">
+      <p class="field__help">緊急時の連絡先として記録に残ります(未入力でも可)。</p>
+    </div>
+    <p class="profile-edit__buttons">
+      <button type="submit" class="btn btn--primary">プロフィールを保存</button>
+      <a href="{% url 'profile' %}" class="btn btn--ghost">保存せず戻る</a>
+    </p>
+  </form>
+</section>
+{% endblock %}

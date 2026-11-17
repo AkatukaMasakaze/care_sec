@@ -1,4 +1,4 @@
-{# 解決報告フォーム(profile.html から include される) #}
+{# 解決報告フォーム(reports/form.html から include される。入力シーン専用ページでのみ表示) #}
 {# 必要コンテキスト: target_alert, residents #}
 <form method="post" action="{% url 'report_create' %}" class="report-form">
   {% csrf_token %}

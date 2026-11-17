@@ -1,64 +1,113 @@
 {% extends "base.html" %}
 
-{% block title %}プロフィール／解決報告{% endblock %}
+{% block title %}プロフィール{% endblock %}
 
 {% block content %}
 <div class="page-header">
-  <h1>プロフィール／解決報告</h1>
-  <p class="page-header__sub">解決した問題の報告入力と、これまでの報告履歴</p>
+  <h1>プロフィール</h1>
+  <p class="page-header__sub">あなたの情報と、これまで対応してきた履歴</p>
 </div>
+
+{# ===== 対応統計 ===== #}
+<section class="stats-grid">
+  <div class="stat-card">
+    <span class="stat-card__label">対応した異常(累計)</span>
+    <span class="stat-card__value">{{ stats.handled_total }}</span>
+    <span class="stat-card__note">今月 {{ stats.handled_month }} 件</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-card__label">解決まで完了</span>
+    <span class="stat-card__value">{{ stats.resolved_total }}</span>
+    <span class="stat-card__note">報告 {{ stats.reports_total }} 件</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-card__label">誤検知として報告</span>
+    <span class="stat-card__value">{{ stats.false_positive_total }}</span>
+    <span class="stat-card__note">AI閾値の調整に反映</span>
+  </div>
+  <div class="stat-card{% if stats.report_pending %} stat-card--warn{% endif %}">
+    <span class="stat-card__label">報告待ち</span>
+    <span class="stat-card__value">{{ stats.report_pending }}</span>
+    <span class="stat-card__note">
+      {% if stats.report_pending %}下の履歴の「報告を入力」から{% else %}残りなし{% endif %}
+    </span>
+  </div>
+</section>
 
 <div class="grid-2">
-  {# ===== プロフィール情報 ===== #}
+  {# ===== プロフィール情報(編集はボタンを押したときだけ現れる) ===== #}
   <section class="card profile-card">
-    <div class="profile-card__avatar" aria-hidden="true">
-      {{ user.get_full_name|default:user.username|slice:":1" }}
-    </div>
     <h2>{{ user.get_full_name|default:user.username }}</h2>
-    <p class="muted">@{{ user.username }} / {{ profile.role|default:"介護スタッフ" }}</p>
+    <p class="muted">@{{ user.username }} / {{ profile_info.job_title|default:"介護スタッフ" }}</p>
     <dl class="profile-card__meta">
-      <dt>所属施設</dt><dd>{{ profile.facility|default:"-" }}</dd>
+      <dt>所属施設</dt><dd>{{ profile_info.facility|default:"-" }}</dd>
+      <dt>連絡先電話</dt><dd>{{ profile_info.phone|default:"-" }}</dd>
       <dt>メールアドレス</dt><dd>{{ user.email|default:"-" }}</dd>
+      <dt>登録日</dt><dd>{{ user.date_joined|date:"Y/m/d" }}</dd>
       <dt>最終ログイン</dt><dd>{{ user.last_login|date:"Y/m/d H:i" }}</dd>
-      <dt>対応件数(累計)</dt><dd>{{ profile.resolved_count|default:0 }} 件</dd>
     </dl>
+    {# 編集は専用ページ(画面内トグルはスクロールを壊すため2026-11-17に別ページ化) #}
+    <p class="profile-card__actions">
+      <a class="btn btn--ghost btn--sm" href="{% url 'profile_edit' %}">✎ プロフィールを編集</a>
+    </p>
   </section>
 
-  {# ===== 解決報告入力 ===== #}
-  <section class="card" id="report-form">
+  {# ===== 統計を補う案内カード ===== #}
+  <section class="card">
     <div class="card__header">
-      <h2>解決報告の入力</h2>
+      <h2>報告について</h2>
     </div>
-    {% if target_alert %}
-      <div class="report-target">
-        <strong>対象の異常:</strong>
-        {{ target_alert.kind_label }} /
-        {{ target_alert.occurred_at|date:"Y/m/d H:i:s" }} /
-        {{ target_alert.location }}
-        {% if target_alert.recording_id %}
-          <a href="{% url 'recording_detail' target_alert.recording_id %}" class="link">🎞 録画を確認</a>
-        {% endif %}
-      </div>
-      {% include "includes/report_form.html" %}
-    {% else %}
-      <p class="muted">
-        報告待ちの異常はありません。<br>
-        異常検知タブで「解決・報告を入力」を押すと、この画面に報告フォームが表示されます。
-      </p>
-      <a href="{% url 'alert_list' %}" class="btn btn--ghost">異常検知タブへ</a>
-    {% endif %}
+    <p class="muted">解決報告の入力はプロフィールでは行いません。<br>
+      異常の詳細ページ、または下の履歴にある<b>「報告を入力」</b>ボタンから、報告専用ページへ移動します。</p>
+    <dl class="profile-card__meta">
+      <dt>報告待ち</dt>
+      <dd>{% if stats.report_pending %}<a class="link" href="{% url 'alert_list' %}?status=resolved">{{ stats.report_pending }} 件あります</a>{% else %}なし{% endif %}</dd>
+      <dt>提出報告</dt><dd>{{ stats.reports_total }} 件</dd>
+      <dt>今月の対応</dt><dd>{{ stats.handled_month }} 件</dd>
+    </dl>
   </section>
 </div>
 
-{# ===== 自分の報告履歴 ===== #}
+{# ===== 対応した異常の時系列 ===== #}
 <section class="card">
   <div class="card__header">
-    <h2>これまでの報告履歴</h2>
+    <h2>これまでに対応した異常</h2>
+    <span class="muted">最大20件</span>
+  </div>
+  <ul class="timeline">
+    {% for alert in timeline %}
+    <li class="timeline__item">
+      <span class="timeline__time">{{ alert.occurred_at|date:"Y/m/d H:i" }}</span>
+      <span class="chip chip--{{ alert.kind }}">{{ alert.kind_label }}</span>
+      <span class="chip chip--{{ alert.status }}">{{ alert.status_label }}</span>
+      <span class="timeline__place muted">{{ alert.camera_name }}{% if alert.location %} / {{ alert.location }}{% endif %}</span>
+      <span class="timeline__actions">
+        {% if alert.report %}
+          <a class="link" href="{% url 'alert_detail' alert.id %}">報告を見る</a>
+        {% elif alert.status == 'resolved' %}
+          <a class="btn btn--success btn--sm" href="{% url 'report_page' alert.id %}">報告を入力</a>
+        {% else %}
+          <a class="link" href="{% url 'alert_detail' alert.id %}">詳細</a>
+        {% endif %}
+      </span>
+    </li>
+    {% empty %}
+    <li class="timeline__item timeline__item--empty muted">
+      まだ対応履歴はありません。異常検知タブの「対応する」から始まります。
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+
+{# ===== 自分の報告一覧 ===== #}
+<section class="card">
+  <div class="card__header">
+    <h2>提出した解決報告</h2>
   </div>
   <table class="table">
     <thead>
       <tr>
-        <th>報告日</th><th>異常の種類</th><th>利用者</th><th>身体的問題</th><th>対応内容</th><th>コメント</th>
+        <th>報告日</th><th>異常の種類</th><th>利用者</th><th>身体的問題</th><th>対応内容</th><th>コメント</th><th></th>
       </tr>
     </thead>
     <tbody>
@@ -70,9 +119,10 @@
         <td><span class="chip chip--physical-{{ report.physical_issue }}">{{ report.physical_issue_label }}</span></td>
         <td>{{ report.action_taken|truncatechars:40 }}</td>
         <td>{{ report.comment|truncatechars:40|default:"-" }}</td>
+        <td><a class="link" href="{% url 'alert_detail' report.alert_id %}">詳細</a></td>
       </tr>
       {% empty %}
-      <tr><td colspan="6" class="table__empty">報告履歴はありません</td></tr>
+      <tr><td colspan="7" class="table__empty">報告履歴はありません</td></tr>
       {% endfor %}
     </tbody>
   </table>

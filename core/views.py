@@ -11,14 +11,15 @@ from django.contrib.auth.decorators import login_required
 from django.db.models import Count
 from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
-from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from . import camera_service
 from .ai_engine import ai_engine as realtime_ai
 from .demo_alerts import create_demo_alert
-from .models import AISettings, Alert, AlertReport, Camera, Recording, Resident
+from .models import (
+    AISettings, Alert, AlertReport, Camera, Recording, Resident, User, UserProfile,
+)
 from .permissions import admin_required
 
 
@@ -97,8 +98,6 @@ def _ai_summary():
 @login_required
 def alert_list(request):
     """異常一覧 + フィルタ(状況/種類/日付/対応者)"""
-    from core.models import User
-
     current_status = request.GET.get("status", "")
     current_kind = request.GET.get("kind", "")
     current_responder = request.GET.get("responder", "")
@@ -164,14 +163,14 @@ def alert_respond(request, alert_id):
 @login_required
 @require_POST
 def alert_resolve(request, alert_id):
-    """「解決・報告を入力」: 解決済みにしてプロフィールの報告フォームへ"""
+    """「解決・報告を入力」: 解決済みにして**報告入力専用ページ**へ導く"""
     alert = get_object_or_404(Alert, id=alert_id)
     has_report = hasattr(alert, "report")
     if alert.status == Alert.Status.RESPONDING and alert.responder == request.user and not has_report:
         alert.status = Alert.Status.RESOLVED
         alert.resolved_at = timezone.now()
         alert.save(update_fields=["status", "resolved_at"])
-        return redirect(f"{reverse('profile')}?alert={alert.id}")
+        return redirect("report_page", alert_id=alert.id)
     messages.warning(request, "解決処理できませんでした(権限または状態を確認してください)。")
     return redirect("alert_list")
 
@@ -217,25 +216,132 @@ def alert_false_positive(request, alert_id):
 # ================= プロフィール / 解決報告 =================
 @login_required
 def profile(request):
-    target_alert = None
-    alert_id = request.GET.get("alert")
-    if alert_id and alert_id.isdigit():
-        alert = Alert.objects.filter(
-            id=int(alert_id), responder=request.user, status=Alert.Status.RESOLVED,
-        ).first()
-        if alert and not hasattr(alert, "report"):
-            target_alert = alert
+    """プロフィールページ: 自分の情報 + 対応統計 + これまでの履歴
 
-    my_reports = AlertReport.objects.filter(author=request.user).select_related("alert", "resident")
+    報告入力はここで行わない(報告は報告専用ページ /reports/<id>/ だけ)。
+    ここは「自分のプロフィールと歩んだ履歴」をフルに活かし、
+    報告待ちがあってもボタンから専用ページへ飛びます。
+    """
+    user = request.user
+    profile_info = UserProfile.for_user(user)
+
+    now = timezone.now()
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    # 自分が対応者になった異常が履歴の軸
+    handled = Alert.objects.filter(responder=user)
+    my_reports = AlertReport.objects.filter(author=user).select_related("alert", "resident")
+
+    stats = {
+        "handled_total": handled.count(),
+        "resolved_total": handled.filter(status=Alert.Status.RESOLVED).count(),
+        "false_positive_total": handled.filter(status=Alert.Status.FALSE_POSITIVE).count(),
+        "reports_total": my_reports.count(),
+        "handled_month": handled.filter(
+            responded_at__gte=month_start,
+        ).count(),
+        # 解決済みなのに報告が未入力の件数(=報告ページへ飛ぶべき残務)
+        "report_pending": handled.filter(
+            status=Alert.Status.RESOLVED, report__isnull=True,
+        ).count(),
+    }
+
+    # 対応した異常の時系列(報告の有無でCTAが変わる)
+    timeline = (
+        handled.select_related("camera", "report")
+        .order_by("-occurred_at")[:20]
+    )
+
     return render(request, "accounts/profile.html", {
-        "target_alert": target_alert,
-        "residents": Resident.objects.all(),
+        "profile_info": profile_info,
+        "stats": stats,
+        "timeline": timeline,
         "my_reports": my_reports,
-        "profile": {
-            "role": "介護スタッフ",
-            "facility": "さくら介護施設",
-            "resolved_count": my_reports.count(),
-        },
+    })
+
+
+@login_required
+def profile_edit(request):
+    """プロフィール編集の**専用ページ**
+
+    プロフィール画面内のトグル開閉は、PC用の「1画面に収める」レイアウト規則と
+    組み合わさってスクロール不能になる実バグがあった(2026-11-17)。
+    編集は独立ページにし、プロフィールは閲覧(情報+履歴)専用に寄せる。
+    """
+    return render(request, "accounts/profile_edit.html", {
+        "profile_info": UserProfile.for_user(request.user),
+    })
+
+
+@login_required
+@require_POST
+def profile_update(request):
+    """プロフィール編集の保存(氏名・メールはUser、施設・役職・電話はUserProfile)
+
+    メール形式エラーのときだけ**編集ページに留まって**再表示する。
+    リダイレクトだと入力中のメールが消失し、スクロール位置も飛ぶため。
+    """
+    user = request.user
+    profile_info = UserProfile.for_user(user)
+
+    data = {
+        "last_name": (request.POST.get("last_name") or "").strip()[:50],
+        "first_name": (request.POST.get("first_name") or "").strip()[:50],
+        "email": (request.POST.get("email") or "").strip(),
+        "facility": (request.POST.get("facility") or "").strip()[:64],
+        "job_title": (request.POST.get("job_title") or "").strip()[:32],
+        "phone": (request.POST.get("phone") or "").strip()[:32],
+    }
+
+    email_error = ""
+    if data["email"]:
+        from django.core.validators import validate_email
+        from django.core.exceptions import ValidationError
+        try:
+            validate_email(data["email"])
+        except ValidationError:
+            email_error = "メールアドレスの形が正しくありません。"
+
+    # 他項目は先に保存する(メールだけが不正でも入力は消さない)
+    user.last_name = data["last_name"]
+    user.first_name = data["first_name"]
+    if not email_error:
+        user.email = data["email"]
+    if data["facility"]:
+        profile_info.facility = data["facility"]
+    if data["job_title"]:
+        profile_info.job_title = data["job_title"]
+    profile_info.phone = data["phone"]
+    user.save(update_fields=["last_name", "first_name", "email"])
+    profile_info.save()
+
+    if email_error:
+        return render(request, "accounts/profile_edit.html", {
+            "profile_info": profile_info,
+            "form_email": data["email"],
+            "form_error": email_error,
+        })
+    messages.success(request, "プロフィールを保存しました。")
+    return redirect("profile")
+
+
+@login_required
+def report_page(request, alert_id):
+    """解決報告の入力専用ページ(報告を入力するシーンだけを表示する)
+
+    入口は異常詳細の「報告を入力」ボタン / 「解決・報告を入力」だけ。
+    条件に合わない異常で開かれたら詳細ページへ戻す(ここで状态の説明をする)。
+    """
+    alert = get_object_or_404(Alert.objects.select_related("camera"), id=alert_id)
+    if getattr(alert, "report", None) is not None:
+        messages.info(request, "この異常の報告はすでに入力済みです。")
+        return redirect("alert_detail", alert_id=alert.id)
+    if alert.status != Alert.Status.RESOLVED or alert.responder_id != request.user.id:
+        messages.warning(request, "自分で解決した異常だけが報告入力できます。")
+        return redirect("alert_detail", alert_id=alert.id)
+    return render(request, "reports/form.html", {
+        "target_alert": alert,
+        "residents": Resident.objects.all(),
     })
 
 
@@ -349,7 +455,7 @@ def report_create(request):
     )
     if hasattr(alert, "report"):
         messages.warning(request, "この異常の報告はすでに入力済みです。")
-        return redirect("profile")
+        return redirect("alert_detail", alert_id=alert.id)
 
     resident_id = request.POST.get("resident") or None
     resident = Resident.objects.filter(id=resident_id).first() if resident_id else None
@@ -367,7 +473,7 @@ def report_create(request):
         comment=request.POST.get("comment", "").strip(),
     )
     messages.success(request, "解決報告を保存しました。")
-    return redirect("profile")
+    return redirect("alert_detail", alert_id=alert.id)
 
 
 # ================= 録画 =================

@@ -72,7 +72,7 @@
         <a href="{% url 'recording_list' %}"><span class="menu__icon"><i class="fa-solid fa-video"></i></span>録画一覧</a>
       </li>
       <li class="menu__item{% if request.resolver_match.url_name == 'profile' %} is-active{% endif %}">
-        <a href="{% url 'profile' %}"><span class="menu__icon"><i class="fa-solid fa-circle-user"></i></span>プロフィール／報告</a>
+        <a href="{% url 'profile' %}"><span class="menu__icon"><i class="fa-solid fa-circle-user"></i></span>プロフィール</a>
       </li>
       <li class="menu__item{% if request.resolver_match.url_name == 'settings' %} is-active{% endif %}">
         <a href="{% url 'settings' %}"><span class="menu__icon"><i class="fa-solid fa-gear"></i></span>設定</a>
@@ -98,7 +98,8 @@
   <div class="sidebar-overlay" id="sidebar-overlay"></div>
 
   {# ================= MAIN画面 ================= #}
-  <main class="main">
+  {# 1画面固定(main--onepage)はダッシュボードだけ。stats-gridの有無で判定すると他ページがスクロール不能になる(実測バグ) #}
+  <main class="main{% if request.resolver_match.url_name == 'dashboard' %} main--onepage{% endif %}">
     {# ビューが messages.success() 等で積んだメッセージを1回だけ表示する #}
 {% if messages %}
   <div class="flash-list">

@@ -73,6 +73,11 @@
       </form>
     {% endif %}
 
+    {# 報告入力専用ページへの入口(解決済み・まだ報告未入力・自分が対応者) #}
+    {% if alert.status == 'resolved' and not report and alert.responder == user %}
+      <a class="btn btn--success btn--block" href="{% url 'report_page' alert.id %}">報告を入力</a>
+    {% endif %}
+
     {# 誤検知登録は「未対応・対応中」だけ(解決済み・誤検知登録済みでは出さない) #}
     {% if alert.status == 'open' or alert.status == 'responding' %}
     <form method="post" action="{% url 'alert_false_positive' alert.id %}" class="fp-form">

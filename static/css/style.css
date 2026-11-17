@@ -640,17 +640,9 @@ textarea:focus-visible {
 }
 
 /* ---------- プロフィール / 報告フォーム ---------- */
+/* プロフィールのアイコン(イニシャルアバター)は2026-11-17 廃止:
+   このシステムで人物アイコンを見せる場面が無いため、名前を直接表示する */
 .profile-card { text-align: center; }
-.profile-card__avatar {
-  width: 64px; height: 64px;
-  margin: 0 auto 8px;
-  border-radius: 50%;
-  background: var(--color-primary);
-  color: #fff;
-  font-size: 25px;
-  font-weight: 600;
-  display: flex; align-items: center; justify-content: center;
-}
 .profile-card__meta {
   text-align: left;
   font-size: 12.5px;
@@ -1366,11 +1358,11 @@ input:checked + .toggle-slider:before {
 /* ---------- ダッシュボード(PC: 1画面に収める) ---------- */
 /* モバイル(900px以下)は従来どおりスクロール可能のまま */
 @media (min-width: 901px) {
-  body:has(.main > .stats-grid) {
+  body:has(.main--onepage) {
     overflow: hidden;
   }
 
-  .main:has(> .stats-grid) {
+  .main--onepage {
     height: calc(100vh - var(--topbar-h));
     padding: 12px 18px;
     display: flex;
@@ -1379,58 +1371,58 @@ input:checked + .toggle-slider:before {
     overflow: hidden;
   }
 
-  .main:has(> .stats-grid) > .global-alert-banner {
+  .main--onepage > .global-alert-banner {
     flex: none;
     margin: 0;
     padding: 6px 12px;
     font-size: 12.5px;
   }
 
-  .main:has(> .stats-grid) > .page-header {
+  .main--onepage > .page-header {
     flex: none;
     display: flex;
     align-items: baseline;
     gap: 10px;
     margin: 0;
   }
-  .main:has(> .stats-grid) > .page-header h1 {
+  .main--onepage > .page-header h1 {
     font-size: 19px;
     line-height: 1.4;
   }
-  .main:has(> .stats-grid) > .page-header .page-header__sub {
+  .main--onepage > .page-header .page-header__sub {
     font-size: 11.5px;
   }
 
-  .main:has(> .stats-grid) > .stats-grid {
+  .main--onepage > .stats-grid {
     flex: none;
     grid-template-columns: repeat(8, minmax(0, 1fr));
     gap: 8px;
     margin: 0;
   }
-  .main:has(> .stats-grid) .stat-card {
+  .main--onepage .stat-card {
     padding: 7px 10px;
     min-width: 0;
   }
-  .main:has(> .stats-grid) .stat-card__label {
+  .main--onepage .stat-card__label {
     font-size: 10.5px;
     line-height: 1.4;
   }
-  .main:has(> .stats-grid) .stat-card__value {
+  .main--onepage .stat-card__value {
     font-size: 22px;
     line-height: 1.25;
   }
-  .main:has(> .stats-grid) .stat-card__note {
+  .main--onepage .stat-card__note {
     font-size: 9.5px;
     line-height: 1.4;
   }
 
-  .main:has(> .stats-grid) > .grid-2 {
+  .main--onepage > .grid-2 {
     flex: 1 1 0;
     min-height: 0;
     gap: 0 14px;
     align-items: stretch;
   }
-  .main:has(> .stats-grid) > .grid-2 > .card {
+  .main--onepage > .grid-2 > .card {
     min-height: 0;
     margin: 0;
     padding: 9px 12px;
@@ -1438,26 +1430,26 @@ input:checked + .toggle-slider:before {
     flex-direction: column;
     overflow: hidden;
   }
-  .main:has(> .stats-grid) .card__header {
+  .main--onepage .card__header {
     flex: none;
     margin-bottom: 5px;
     padding-bottom: 5px;
   }
-  .main:has(> .stats-grid) .card__header h2 {
+  .main--onepage .card__header h2 {
     font-size: 13.5px;
   }
 
-  .main:has(> .stats-grid) .table {
+  .main--onepage .table {
     font-size: 12px;
   }
-  .main:has(> .stats-grid) .table th {
+  .main--onepage .table th {
     padding: 4px 8px;
   }
-  .main:has(> .stats-grid) .table td {
+  .main--onepage .table td {
     padding: 5px 8px;
   }
 
-  .main:has(> .stats-grid) .bar-chart {
+  .main--onepage .bar-chart {
     flex: 1 1 auto;
     min-height: 72px;
     height: auto;
@@ -1466,21 +1458,21 @@ input:checked + .toggle-slider:before {
   /* 1ページレイアウトでは card が overflow:hidden なので、はみ出した行は
      **スクロール先が無く切り捨てられて見えない**(カメラは件数無制限で実際に踏んだ)。
      一覧そのものにスクロールを持たせる。 */
-  .main:has(> .stats-grid) .mini-list {
+  .main--onepage .mini-list {
     flex: 1 1 auto;
     min-height: 0;
     overflow-y: auto;
     overscroll-behavior: contain;
     scrollbar-width: thin;
   }
-  .main:has(> .stats-grid) .mini-list li > a,
-  .main:has(> .stats-grid) .mini-list li > .mini-list__row {
+  .main--onepage .mini-list li > a,
+  .main--onepage .mini-list li > .mini-list__row {
     padding: 3px 4px;
   }
-  .main:has(> .stats-grid) .mini-list__body {
+  .main--onepage .mini-list__body {
     line-height: 1.4;
   }
-  .main:has(> .stats-grid) .mini-list__body small {
+  .main--onepage .mini-list__body small {
     line-height: 1.4;
   }
   /* カメラ状態の一覧だけの追加調整。以前は行を等分に伸ばして収めようとしていたが、
@@ -1492,16 +1484,16 @@ input:checked + .toggle-slider:before {
      溢れたら上の共通ルールでスクロール」に切り替えた。 */
   /* カメラ状態の一覧だけ追加で「伸ばして埋める / 読める最小高さまでしか縮めない」を行う
      (スクロール自体は上の .mini-list 共通ルールが面倒を見る) */
-  .main:has(> .stats-grid) .card:has(.status-dot) .mini-list {
+  .main--onepage .card:has(.status-dot) .mini-list {
     display: flex;
     flex-direction: column;
   }
-  .main:has(> .stats-grid) .card:has(.status-dot) .mini-list li {
+  .main--onepage .card:has(.status-dot) .mini-list li {
     flex: 1 1 auto;      /* 台数が少ないときは伸ばしてカードの高さに合わせる(従来どおりの見た目) */
     min-height: 34px;    /* これ以下には縮めない=読める。必要高さが超えたらスクロールに出る */
     display: flex;
   }
-  .main:has(> .stats-grid) .card:has(.status-dot) .mini-list li > .mini-list__row {
+  .main--onepage .card:has(.status-dot) .mini-list li > .mini-list__row {
     flex: 1;
     min-height: 0;
   }
@@ -1509,13 +1501,13 @@ input:checked + .toggle-slider:before {
 
 /* 幅が狭いPCではサマリを2段にして読みやすさを優先 */
 @media (min-width: 901px) and (max-width: 1099px) {
-  .main:has(> .stats-grid) > .stats-grid {
+  .main--onepage > .stats-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
-  .main:has(> .stats-grid) .stat-card {
+  .main--onepage .stat-card {
     padding: 5px 10px;
   }
-  .main:has(> .stats-grid) .stat-card__value {
+  .main--onepage .stat-card__value {
     font-size: 21px;
   }
 }
@@ -1556,3 +1548,58 @@ input:checked + .toggle-slider:before {
 .flash--success { border-left-color: var(--color-success); }  /* 成功 = 緑 */
 .flash--warning { border-left-color: var(--color-warn); }     /* 注意 = 橙 */
 .flash--error   { border-left-color: var(--color-danger); }   /* 失敗 = 赤 */
+/* ---------- プロフィールページ(履歴タイムライン / 編集フォーム) ---------- */
+.timeline {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0 0 0 14px;
+  border-left: 2px solid var(--color-border);
+  display: grid;
+  gap: 10px;
+}
+.timeline__item {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  padding: 4px 0;
+}
+.timeline__item::before {
+  content: "";
+  position: absolute;
+  left: -19px;
+  top: 10px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-primary);
+}
+.timeline__item--empty::before { background: var(--color-muted); }
+.timeline__time {
+  font-weight: 600;
+  color: #3c434b;
+  min-width: 118px;
+}
+.timeline__place { flex: 1 1 auto; }
+.timeline__actions { margin-left: auto; }
+.field--pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.report-page__cancel { margin-top: 14px; }
+@media (max-width: 560px) {
+  .field--pair { grid-template-columns: 1fr; gap: 0; }
+  .timeline__actions { margin-left: 0; width: 100%; }
+}
+
+/* ---------- プロフィール編集(専用ページ) ---------- */
+.profile-card__actions { margin: 12px 0 0; }
+.profile-edit__buttons {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+}
