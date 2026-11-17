@@ -50,6 +50,9 @@
     <p class="field__help">AI設定は自動調整されるため、手動変更はできません。</p>
   </section>
 
+  {# ===== 以下3セクションは管理者(is_admin)のみ ===== #}
+  {# 表示を隠すだけでなく、POST先(settings_action)もサーバー側で admin_required。 #}
+  {% if user.is_admin %}
   {# ===== AI監視の稼働 ON/OFF(実AIの検知を制御) ===== #}
   <section class="card">
     <div class="card__header">
@@ -123,5 +126,6 @@
       </p>
     </form>
   </section>
+  {% endif %}
 </div>
 {% endblock %}

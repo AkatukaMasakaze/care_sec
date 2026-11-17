@@ -377,10 +377,15 @@ def purge_media_files():
     return deleted, len(failed), failed
 
 
-@login_required
+@admin_required
 @require_POST
 def settings(request):
-    """設定ページのPOST処理（データ削除・AI監視のON/OFF）"""
+    """設定ページのPOST処理（データ削除・AI監視のON/OFF・異常検知デモ）
+
+    **管理者のみ**。テンプレート側でも3セクションを is_admin で隠すが、
+    表示を隠すだけではURL直POSTで実行できてしまうため、
+    サーバー側でも必ず通す(一般介護士は403 permission_denied)。
+    """
     from core.models import AISettings
 
     ai = AISettings.load()

@@ -9,10 +9,67 @@
 from django.test import TestCase
 from django.utils import timezone
 
-from core.models import Alert, AlertReport, Camera, Resident, User, UserProfile
+from core.models import (
+    AISettings, Alert, AlertReport, Camera, Resident, User, UserProfile,
+)
+
+
+class SettingsTabRolesTest(TestCase):
+    """設定タブ: AI監視の稼働 / 異常検知デモ / データ削除 は管理者のみ"""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.nurse = User.objects.create_user("nurse_s", password="pw-verify-1")
+        cls.admin = User.objects.create_admin("admin_s", password="pw-verify-1")
+
+    MARKERS = {
+        "AI監視の稼働": 'id="ai-form"',
+        "異常検知デモ": 'value="demo_alert"',
+        "データ削除": 'value="clear_all_data"',
+    }
+
+    def test_nurse_cannot_see_admin_sections(self):
+        self.client.force_login(self.nurse)
+        res = self.client.get("/accounts/settings/")
+        self.assertEqual(res.status_code, 200)
+        body = res.content.decode("utf-8")
+        self.assertIn("通知設定", body)  # 通知設定は一般介護士にも見える(従来のまま)
+        for name, marker in self.MARKERS.items():
+            self.assertNotIn(marker, body, name + " が一般介護士に見えている")
+
+    def test_admin_sees_all_sections(self):
+        self.client.force_login(self.admin)
+        res = self.client.get("/accounts/settings/")
+        self.assertEqual(res.status_code, 200)
+        body = res.content.decode("utf-8")
+        for name, marker in self.MARKERS.items():
+            self.assertIn(marker, body, name + " が管理者に見えない")
+
+    def test_nurse_post_is_403(self):
+        """表示を隠すだけじゃなく、URL直POSTもサーバー側で止める"""
+        self.client.force_login(self.nurse)
+        for action in ("toggle_ai_off", "toggle_ai_on", "demo_alert", "clear_all_data"):
+            res = self.client.post("/accounts/settings/action/", {"action": action})
+            self.assertEqual(res.status_code, 403, action + " が通ってしまった")
+            self.assertTemplateUsed(res, "permission_denied.html")
+
+    def test_anonymous_post_goes_to_login(self):
+        res = self.client.post("/accounts/settings/action/", {"action": "clear_all_data"})
+        self.assertEqual(res.status_code, 302)
+        self.assertIn("/accounts/login/", res["Location"])
+
+    def test_admin_post_ai_toggle_works(self):
+        self.client.force_login(self.admin)
+        res = self.client.post("/accounts/settings/action/", {"action": "toggle_ai_off"})
+        self.assertRedirects(res, "/accounts/settings/")
+        self.assertFalse(AISettings.load().enabled)
+        res = self.client.post("/accounts/settings/action/", {"action": "toggle_ai_on"})
+        self.assertRedirects(res, "/accounts/settings/")
+        self.assertTrue(AISettings.load().enabled)
 
 
 class ProfileAndReportSplitTest(TestCase):
+
     @classmethod
     def setUpTestData(cls):
         cls.nurse = User.objects.create_user("nurse_a", password="pw-verify-1")

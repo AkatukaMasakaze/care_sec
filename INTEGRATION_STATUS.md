@@ -1770,9 +1770,12 @@ manage.py check / verify_pages → 全通過
 `User.is_staff` / `is_superuser` は**プロパティで `is_admin` を返す**作りなので、
 Django管理画面側の staff 検査も自然に `is_admin` に追随する(列の追加・マイグレーションは不要)。
 
-### 未対応(要確認)
+### 未対応(要確認) → **2026-11-17 対応済み**
 `/accounts/settings/` の **データ全削除 / AI監視ON・OFF / 異常検知デモ** は、現在も一般介護士が
 操作できます。業務画面なので残しましたが、管理者専用にしたいなら `@admin_required` を1行足すだけです。
+→ **対応**: テンプレート側で3セクションを `{% if user.is_admin %}` で包み、
+POSTビュー `settings`(settings_action)自体を `@admin_required` 化。
+表示を隠すだけではURL直POSTが通るためサーバー側も必須。テスト `SettingsTabRolesTest` 5件追加(17/17 OK)。
 
 ---
 
