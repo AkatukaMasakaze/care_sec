@@ -197,7 +197,9 @@ def alert_false_positive(request, alert_id):
 
     ai = AISettings.load()
     if alert.kind == Alert.Kind.FALL:
-        ai.fall_threshold = min(0.95, round(ai.fall_threshold + 0.02, 2))
+        # 上限は0.60。ai2.0系モデルの設計閾値0.5からの微調整用で、
+        # これ以上上げると見逃し側へ急速に劣化する(実測: 0.75で転倒1本追加で見逃し)
+        ai.fall_threshold = min(0.60, round(ai.fall_threshold + 0.02, 2))
         ai.save()
         messages.success(
             request,

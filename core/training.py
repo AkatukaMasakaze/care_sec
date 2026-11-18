@@ -173,15 +173,44 @@ def create_sequences(data, length=SEQUENCE_LENGTH, stride=STRIDE):
     ]
 
 
-def build_fall_dataset(directory=None, stride=STRIDE):
-    """train_data/*.csv → X (N,30,99) / y (N,) を作る
+def normalize_landmarks(data):
+    """ai2.0 のグループ化モデル仕様: 腰中心原点・体幹尺度で正規化する
 
-    戻り値: (X, y, rows, skipped)  rows=[{file,label,frames,sequences}]
+    (フレーム数, 99) → (フレーム数, 99)。
+    左右の腰(23,24)の中点を原点に平移し、肩中心(11,12)〜腰中心の距離で割る。
+    人物の位置・画面内の大きさ(=カメラとの距離)に依存した誤差を削るのが目的で、
+    ai2.0 の check_grouped_fall_model_normalized.py / realtime_lstm.py と同一計算。
+    **転倒モデル専用**。状態モデルは生の99値で学習済みなので正規化しない。
     """
     import numpy as np
 
-    X, y, rows, skipped = [], [], [], []
-    for path in csv_files(directory):
+    lm = np.asarray(data, dtype=np.float32).reshape(-1, 33, 3).copy()
+    hip_center = (lm[:, 23, :] + lm[:, 24, :]) / 2.0
+    shoulder_center = (lm[:, 11, :] + lm[:, 12, :]) / 2.0
+    lm -= hip_center[:, None, :]
+    torso_scale = np.maximum(np.linalg.norm(shoulder_center - hip_center, axis=1), 1e-6)
+    lm /= torso_scale[:, None, None]
+    return lm.reshape(-1, FEATURES).astype(np.float32)
+
+
+def build_fall_dataset(directory=None, stride=STRIDE):
+    """train_data/*.csv → X (N,30,99) / y (N,) を作る
+
+    戻り値: (X, y, rows, skipped, groups)
+      rows=[{file,label,frames,sequences,first}]
+      groups[i] = X[i] が由来するCSVのインデックス(0始まり)。
+        grouped分割用: **同じCSV由来の窓が学習/検証の両方に混ざると
+        実データより見かけの精度が上がる**(データリーク)ため、
+        train_fall は groups でファイル単位分割をする(ai2.0準拠)。
+    AI_NORMALIZE_FALL_INPUT=True(既定)のとき X は正規化済み(腰中心/体幹尺度)。
+    推論側(core/ai_engine.py)も同じ正規化をするため、ここを切り替える場合は
+    モデルファイル名(AI_FALL_MODEL_FILENAME)とセットで揃えること。
+    """
+    import numpy as np
+
+    normalize = bool(getattr(settings, "AI_NORMALIZE_FALL_INPUT", True))
+    X, y, rows, skipped, groups = [], [], [], [], []
+    for file_index, path in enumerate(csv_files(directory)):
         label = fall_label_from_filename(path)
         name = os.path.basename(path)
         if label is None:
@@ -191,12 +220,15 @@ def build_fall_dataset(directory=None, stride=STRIDE):
         if data is None:
             skipped.append((name, error))
             continue
+        if normalize:
+            data = normalize_landmarks(data)
         sequences = create_sequences(data, SEQUENCE_LENGTH, stride)
         if not sequences:
             skipped.append((name, f"フレーム数不足({len(data)} < {SEQUENCE_LENGTH})"))
             continue
         X.extend(sequences)
         y.extend([label] * len(sequences))
+        groups.extend([file_index] * len(sequences))
         rows.append({
             "file": name, "label": label, "frames": len(data),
             "sequences": len(sequences), "first": len(y) - len(sequences),
@@ -207,6 +239,7 @@ def build_fall_dataset(directory=None, stride=STRIDE):
         np.array(y, dtype=np.int64) if y else np.empty((0,), np.int64),
         rows,
         skipped,
+        np.array(groups, dtype=np.int64) if groups else np.empty((0,), np.int64),
     )
 
 
@@ -273,7 +306,10 @@ def dataset_path(name):
 
 
 # ================= モデル定義・学習・評価 =================
-FALL_MODEL_FILENAME = "fall_detection_lstm.keras"
+# 現行の転倒モデルは ai2.0 系統の grouped+normalized 版。
+# settings.AI_FALL_MODEL_FILENAME を旧名(fall_detection_lstm.keras)に戻すと
+# 学習・候補・promote も含めて丸ごと旧運用へ戻せる。
+FALL_MODEL_FILENAME = str(getattr(settings, "AI_FALL_MODEL_FILENAME", "fall_detection_lstm.keras"))
 STATE_MODEL_FILENAME = "state_detection_lstm.keras"
 STATE_LABELS_FILENAME = "state_labels.npy"
 
@@ -317,16 +353,63 @@ def build_state_model(input_shape, n_classes):
     return model
 
 
-def train_fall(X, y, epochs=50, batch_size=16, test_size=0.2, seed=42, verbose=1):
-    """転倒モデルを学習し (model, metrics, test分割) を返す"""
+def _group_split(groups, y, test_size=0.2, seed=42):
+    """グループ(CSVファイル)単位で train/test の boolマスクに分割する
+
+    ai2.0 の check_grouped_fall_model*.py と同じ思想。
+    片側のクラスが消えるほど偏る分割になったら、従来の窓stratify分割へ退避する
+    (検証が無意味になるより、正直な数字を出せる分割を選ぶ)。
+    """
+    import numpy as np
+    from sklearn.model_selection import train_test_split
+
+    unique = np.unique(groups)
+    rng = np.random.RandomState(seed)
+    order = rng.permutation(unique)
+    target = max(1, int(round(len(groups) * float(test_size))))
+    test_groups, taken = [], 0
+    for g in order:
+        size = int(np.sum(groups == g))
+        # 1グループだけで test を超過しすぎたら、次で止める判断は「残り1グループ以上」条件で保護
+        test_groups.append(int(g))
+        taken += size
+        if taken >= target:
+            break
+    if len(test_groups) >= len(unique):
+        test_groups = test_groups[:-1]  # train側に必ず1グループ残す
+    test_mask = np.isin(groups, test_groups)
+    train_mask = ~test_mask
+    if len(np.unique(y[test_mask])) < 2 or len(np.unique(y[train_mask])) < 2:
+        idx = np.arange(len(y))
+        tr_idx, te_idx = train_test_split(idx, test_size=test_size, random_state=seed, stratify=y)
+        train_mask = np.zeros(len(y), dtype=bool)
+        test_mask = np.zeros(len(y), dtype=bool)
+        train_mask[tr_idx] = True
+        test_mask[te_idx] = True
+    return train_mask, test_mask
+
+
+def train_fall(X, y, epochs=50, batch_size=16, test_size=0.2, seed=42, verbose=1, groups=None):
+    """転倒モデルを学習し (model, metrics, test分割) を返す
+
+    groups(=build_fall_datasetの5番目)を渡すと**CSVファイル単位**で
+    学習/検証に分割する(ai2.0のgrouped評価相当)。同じ行動の連続窓が
+    両側に散ると見かけの精度が上がるため、窓ランダム分割より正直な数字になる。
+    groups 指定なし(古いデータセット)の場合は従来どおり stratify 分割。
+    """
     import numpy as np
     from sklearn.metrics import classification_report, confusion_matrix
     from sklearn.model_selection import train_test_split
     from tensorflow.keras.callbacks import EarlyStopping
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, random_state=seed, stratify=y
-    )
+    if groups is not None:
+        train_mask, test_mask = _group_split(np.asarray(groups), y, test_size=test_size, seed=seed)
+        X_train, X_test = X[train_mask], X[test_mask]
+        y_train, y_test = y[train_mask], y[test_mask]
+    else:
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=test_size, random_state=seed, stratify=y
+        )
     model = build_fall_model((X.shape[1], X.shape[2]))
     model.fit(
         X_train, y_train,

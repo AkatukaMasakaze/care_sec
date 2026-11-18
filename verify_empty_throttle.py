@@ -25,26 +25,67 @@ from django.conf import settings  # noqa: E402
 from core import ai_engine  # noqa: E402
 
 
-class FakeResult:
-    def __init__(self, landmarks):
-        self.pose_landmarks = landmarks
-
-
 class FakeLM:
-    """少しだけ揺らす(無動作アラート経路に入らないため)"""
+    """ai2.0エンジン(_person_ok等)が要求する体幹形状つきの偽ランドマーク
 
-    def __init__(self, i, t):
-        self.x = 0.4 + 0.01 * ((i + int(t * 10)) % 3)
-        self.y = 0.5 + 0.01 * ((i * 7 + int(t * 13)) % 5)
+    肩(11,12) y=0.42 / 腰(23,24) y=0.68 のように、実体の骨格 proportions を
+    模した座標を返す。visibility は 0.9。x に少し揺らして「動いている」扱いにする。
+    """
+
+    _Y = {}
+    for _i in range(0, 11):
+        _Y[_i] = 0.30
+    for _i in (11, 12):
+        _Y[_i] = 0.42
+    for _i in range(13, 23):
+        _Y[_i] = 0.52
+    for _i in (23, 24):
+        _Y[_i] = 0.68
+    for _i in range(25, 27):
+        _Y[_i] = 0.80
+    for _i in range(27, 33):
+        _Y[_i] = 0.92
+
+    def __init__(self, i, t, base_x=0.5):
+        self.x = base_x + (0.02 if i % 2 else -0.02) + 0.01 * ((i + int(t * 10)) % 3)
+        self.y = self._Y.get(i, 0.5) + 0.005 * ((i * 7 + int(t * 13)) % 4)
         self.z = 0.0
+        self.visibility = 0.9
+        self.pose_presence = 0.9
+        self.normalized_landmark = self
+
+
+class FakePerson:
+    """1人物分のランドマーク列(33個)"""
+
+    def __init__(self, base_x, t):
+        self._t = t
+        self._base_x = base_x
+
+    def __iter__(self):
+        return iter([FakeLM(i, self._t, self._base_x) for i in range(33)])
+
+    def __getitem__(self, i):
+        return FakeLM(i, self._t, self._base_x)
+
+    def __len__(self):
+        return 33
+
+
+class FakeResult:
+    def __init__(self, persons):
+        # 新エンジンは result.pose_landmarks を **人物リストとして**扱う
+        self.pose_landmarks = persons
 
 
 class FakeLandmarker:
-    """person_schedule: (秒, 有人bool) の切り替え。calls を数える"""
+    """person_schedule: (秒, 有人bool) の切り替え。calls を数える。
+    people_x: 人物のbase_xリスト(複数人物検証用)。"""
 
-    def __init__(self, duration, person_schedule, jitter=False):
+    def __init__(self, duration=0.0, person_schedule=None, people_x=None):
         self.duration = duration
-        self.schedule = sorted(person_schedule)
+        self.schedule = sorted(person_schedule or [])
+        self.people_x = people_x or [0.5]
         self.calls = 0
         self.person = False
         self.t0 = time.monotonic()
@@ -57,7 +98,7 @@ class FakeLandmarker:
                 self.person = on
         self.calls += 1
         if self.person:
-            return FakeResult([[FakeLM(i, el) for i in range(33)]])
+            return FakeResult([FakePerson(x, el) for x in self.people_x])
         return FakeResult(None)
 
 
@@ -75,8 +116,9 @@ def run_case(label, duration, person_schedule, optimize=True, probe=0.2, hold=2.
     shared = {
         "np": np,
         "connections": [],
-        "fall_infer": lambda x: np.array([[0.01]]),
-        "state_infer": lambda x: np.zeros((x.shape[0], 8)) + 0.1,
+        # バッチ対応: 入力は (N,30,99) → 出力は (N,1)/(N,8)(実エンジンと同じ契約)
+        "fall_infer": lambda x: np.full((x.shape[0], 1), 0.01, dtype=np.float32),
+        "state_infer": lambda x: np.full((x.shape[0], 8), 0.1, dtype=np.float32),
         "state_labels": ["立っている"] * 8,
         "infer_lock": threading.Lock(),
     }

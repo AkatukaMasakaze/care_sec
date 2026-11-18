@@ -184,7 +184,7 @@ class CameraAdmin(BaseModelAdmin):
 @admin.register(Alert, site=admin_site)
 class AlertAdmin(BaseModelAdmin):
     list_display = (
-        "occurred_at", "kind", "status", "camera", "responder",
+        "occurred_at", "kind", "status", "camera", "responder", "person_id",
         "confidence", "detected_state", "is_false_positive",
     )
     list_filter = ("kind", "status", "is_false_positive")

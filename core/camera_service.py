@@ -28,6 +28,17 @@ _detect_partial = []       # 検知中に見つかったデバイス(部分結�
 _streams = {}
 _streams_lock = threading.Lock()
 
+# --- 既知indexキャッシュ(2026-11-18) ---
+# フル検知(全indexを実際に開く)は **起動時1回 + 以降 DEBUG_CAMERA_FULL_SCAN_SECONDS
+# ごと(既定5分)** だけ行う。その間は detect_devices を呼んでも
+# 「既知のindexを in_use 状態だけ更新して返す」ので、カメラを開きに行かない。
+# 常時稼働の30秒ループが毎回 0..7 を総当たりし、存在しないindexを開こうとして
+# ログが埋まり、カメラスタックを不安定化させていた問題の対策。
+_known_indices = []        # 過去に利用可能/配信中だったUSB index(起動中ずっと保持)
+_known_devices = []        # 直近フル検知のデバイスdict群(quick pathの戻し値)
+_last_full_scan_at = 0.0   # 直近フル検知の完了時刻(monotonic)
+_last_os_count = None      # 直近フル検知で見たOS台数
+
 # デバイス検知の進捗(ブラウザの進行バー表示用)
 # state: idle / running / done / error
 _detect_progress = {
@@ -81,6 +92,44 @@ def detect_progress():
 
 def _cache_seconds():
     return float(getattr(settings, "DEBUG_CAMERA_CACHE_SECONDS", 30))
+
+
+def _full_scan_seconds():
+    """フル検知(全indexを開いて探す)をやる間隔。既定5分"""
+    return float(getattr(settings, "DEBUG_CAMERA_FULL_SCAN_SECONDS", 300))
+
+
+def known_indices():
+    """これまでに見つかったことのあるUSB index(エンジンはこれだけ準備する)"""
+    return list(_known_indices)
+
+
+def _quick_devices():
+    """カメラを開かず、既知indexからデバイス一覧を組み立てる(quick path専用)
+
+    配信中(=エンジンが保持)のindexは開き直せないため in_use として報告し、
+    それ以外は直近フル検知の結果をそのまま返す。
+    """
+    devices = []
+    by_index = {d.get("index"): d for d in _known_devices}
+    for index in _known_indices:
+        with _streams_lock:
+            active = _streams.get(index)
+        if active:
+            info = _name_device(dict(active["info"], in_use=True))
+            thumb = Path(settings.MEDIA_ROOT) / "camera_snapshots" / snapshot_name(index)
+            if thumb.exists():
+                media_url = settings.MEDIA_URL or "/media/"
+                info["snapshot_url"] = "%scamera_snapshots/%s?t=%d" % (
+                    media_url, thumb.name, int(thumb.stat().st_mtime))
+            devices.append(info)
+            continue
+        base = by_index.get(index)
+        if base is not None:
+            device = dict(base)
+            device.pop("in_use", None)
+            devices.append(device)
+    return devices
 
 
 def _friendly_names_windows(count):
@@ -522,6 +571,26 @@ def detect_devices(force=False):
             _set_progress(state="done", stage="キャッシュ済み", finished_at=now)
             return {"ok": True, "cached": True, "devices": cached}
 
+    # --- quick path(2026-11-18)---
+    # フル検知から DEBUG_CAMERA_FULL_SCAN_SECONDS 間は、カメラを1つも開かずに
+    # 既知indexの一覧を返す(in_use 状態だけ現在の配信状況から更新)。
+    # 常時稼働の30秒サイクルがこれを呼ぶため、以降はログの
+    # 「index N を開いています…/開けませんでした」総当たり連発が消える。
+    if not force and _known_indices and \
+            (time.monotonic() - _last_full_scan_at) < _full_scan_seconds():
+        devices = _quick_devices()
+        with _detect_lock:
+            _detect_cache["at"] = time.monotonic()
+            _detect_cache["devices"] = devices
+        _set_progress(
+            state="done",
+            stage="クイック確認(既知 %d 台 / フル検知は %d 秒ごと)" % (
+                len(_known_indices), int(_full_scan_seconds())),
+            current=len(devices), total=len(devices), finished_at=time.monotonic(),
+        )
+        return {"ok": True, "cached": True, "quick": True, "devices": devices}
+
+    with _detect_lock:
         if _detect_thread is not None and _detect_thread.is_alive():
             # すでに検知中 → 進捗だけ返す
             return {"ok": True, "pending": True, "devices": list(_detect_partial)}
@@ -638,6 +707,18 @@ def _run_detection(cv2):
     with _detect_lock:
         _detect_cache["at"] = time.monotonic()
         _detect_cache["devices"] = devices
+
+    # 既知indexを更新(ここから quick path が効くようになる)。
+    # available=False のだけのindexは既知に含めない(開けないindexの総当たり戻し)。
+    global _known_indices, _known_devices, _last_full_scan_at, _last_os_count
+    _known_devices = list(devices)
+    _known_indices = sorted({
+        d["index"] for d in devices
+        if d.get("available", True) or d.get("in_use")
+    })
+    _last_os_count = os_count
+    _last_full_scan_at = time.monotonic()
+
     _detect_partial = list(devices)
     _set_progress(state="done", stage="完了", current=total, finished_at=time.monotonic())
 

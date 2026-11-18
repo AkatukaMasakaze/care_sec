@@ -70,6 +70,60 @@ class SettingsTabRolesTest(TestCase):
         self.assertTrue(AISettings.load().enabled)
 
 
+class VelocityFallRuleTest(TestCase):
+    """速度ルール(第2の転倒検出器)の純粋関数テスト
+
+    実装: core/ai_engine._velocity_fall_check
+    条件: ①windowフレーム以内にroll_thr°以上の急転倒 ②水平到達 ③起き上がらない
+    """
+
+    def _check(self, tilts):
+        from core.ai_engine import _velocity_fall_check
+        return _velocity_fall_check(list(tilts), 25.0, 10, 60.0, 45.0, 15)
+
+    def test_fast_collapse_stays_down(self):
+        """速く倒れて水平のまま → 発火"""
+        tilts = [5.0] * 10 + list(range(5, 70, 6)) + [68.0] * 15
+        ok, why = self._check(tilts)
+        self.assertTrue(ok, why)
+
+    def test_slow_lean_not_fired(self):
+        """ゆっくり倒れる(物を拾う程度の速度) → window内25°未満で発火しない"""
+        tilts = [5.0 + i * 1.5 for i in range(30)]  # 10フレームで15°ずつ
+        ok, _ = self._check(tilts)
+        self.assertFalse(ok)
+
+    def test_pick_up_then_stand_not_fired(self):
+        """速く深く傾いたが直後に起き上がった → 維持条件で発火しない"""
+        tilts = [5.0] * 5 + list(range(5, 70, 6)) + [65.0] * 5 + list(range(65, 5, -6)) + [5.0] * 5
+        ok, _ = self._check(tilts)
+        self.assertFalse(ok)
+
+    def test_fast_to_horizontal_but_not_enough_history(self):
+        """履歴が window+stay 未満のうちは発火を急がない(誤爆防止)"""
+        tilts = [5.0] * 5 + list(range(5, 70, 6))
+        ok, _ = self._check(tilts)
+        self.assertFalse(ok)
+
+    def test_torso_tilt_math(self):
+        """_torso_tilt: 直立0° 水平≈90°(肩-腰ベクトルから)"""
+        from core.ai_engine import _torso_tilt
+
+        class LM:
+            def __init__(self, x, y):
+                self.x, self.y = x, y
+
+        upright = [LM(0, 0)] * 33
+        upright[11] = upright[12] = LM(0.5, 0.42)   # 肩
+        upright[23] = upright[24] = LM(0.5, 0.68)   # 腰
+        self.assertAlmostEqual(_torso_tilt(upright), 0.0, places=2)
+
+        horizontal = [LM(0, 0)] * 33
+        horizontal[11] = horizontal[12] = LM(0.3, 0.67)
+        horizontal[23] = horizontal[24] = LM(0.56, 0.68)
+        self.assertGreater(_torso_tilt(horizontal), 70.0)
+
+
 class ProfileAndReportSplitTest(TestCase):
 
     @classmethod

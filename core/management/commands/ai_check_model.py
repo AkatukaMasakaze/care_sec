@@ -80,7 +80,7 @@ class Command(BaseCommand):
     def _check_fall(self, model, threshold, top):
         import numpy as np
 
-        X, y, rows, skipped = training.build_fall_dataset()
+        X, y, rows, skipped, groups = training.build_fall_dataset()
         if len(X) == 0:
             raise CommandError("検証用シーケンスが作れません(train_data/*.csv を確認してください)")
 

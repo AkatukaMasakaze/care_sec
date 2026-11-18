@@ -70,7 +70,7 @@ def run_startup_retraining(force=False):
 
     need, finger, reason = needs_retrain()
     if not need and not force:
-        _log(reason)
+        _log(f"{reason} → 学習スキップ(指紋チェックのみ。毎回学習しているわけではありません)")
         return False
 
     _log(f"再学習を開始します({reason}) / 対象 {finger['files']}ファイル "
@@ -99,17 +99,19 @@ def run_startup_retraining(force=False):
 def _retrain_fall():
     import numpy as np
 
-    X, y, rows, skipped = training.build_fall_dataset()
+    X, y, rows, skipped, groups = training.build_fall_dataset()
     if len(X) == 0:
         raise RuntimeError("train_data/*.csv からシーケンスを作れませんでした")
     np.save(training.dataset_path("X.npy"), X)
     np.save(training.dataset_path("y.npy"), y)
+    np.save(training.dataset_path("groups.npy"), groups)
 
     threshold = _threshold()
     model, metrics, (X_test, y_test, _prob) = training.train_fall(
         X, y,
         epochs=int(getattr(settings, "AI_RETRAIN_EPOCHS_FALL", 50)),
         verbose=0,
+        groups=groups,
     )
     candidate_path = training.candidate_dir() / training.FALL_MODEL_FILENAME
     model.save(candidate_path)

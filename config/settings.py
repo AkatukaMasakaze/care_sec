@@ -170,6 +170,12 @@ DEBUG_CAMERA_AUTO_RANGE = True
 DEBUG_CAMERA_PROBE_EXTRA = 0
 # 探索する index の**上限**(OS台数こちらで頭打ち)。カメラを6台以上載せるなら増やす
 DEBUG_CAMERA_MAX_DEVICES = 8
+# **フル検知の間隔(秒)**(2026-11-18)。
+# 起動時に1回だけ全indexを実際に開いて探し、以降は「見つかったindex」だけを
+# 準備する。この間隔(既定5分)に1回だけフル検知して、後から差し込まれた
+# カメラを拾う。それ以外の detect_devices はカメラを1つも開かない(quick path)。
+# デバッグページの「再検知」ボタン(force)は常にフル検知する。
+DEBUG_CAMERA_FULL_SCAN_SECONDS = 300
 # 開けなかったインデックスを再試行するまでの間隔(秒)。
 # 存在しない/他アプリ占有のindexを開こうとすると Windows では数十秒ハングし、
 # そのスレッドが溜まると **既に配信中のカメラまで映像が止まる**(実測)ため、
@@ -277,6 +283,55 @@ AI_PERSON_LOST_SECONDS = 2.0
 # 自撮り風にミラー表示したいだけなら True にするが、その場合は
 # ai_collect_data でも同じ向きで収集し直して再学習すること。
 AI_MIRROR_INPUT = False
+# --- 複数人物検知(ai2.0 系統へのアップグレード / 2026-11-17) ---
+# ai2.0 の realtime_lstm.py を Django エンジンへ統合したもの。
+# 1枚の映像から最大 AI_MAX_POSES 人まで同時検知し、人物ごとに
+# 30フレーム系列・転倒判定(8回連続)・無動作追跡を持つ。
+# 転倒モデルは grouped+normalized 版(腰中心原点/体幹尺度で正規化)を使う。
+AI_MAX_POSES = 5
+# POSE 推論はフル解像度ではなくこの横幅へ縮小して打つ(実測コスト削減)。
+# ランドマークは 0..1 の正規化座標なので描画・AI入力は解像度に依存しない。
+AI_POSE_PROCESS_WIDTH = 320
+AI_POSE_PROCESS_HEIGHT = 240
+# 人物トラックの同一性判定: 腰中心の距離がこの値未満なら「同じ人」
+AI_TRACK_DISTANCE_THRESHOLD = 0.18
+# このフレーム数だけ検出されなかったトラックは削除(約0.5秒 @30fps)
+AI_TRACK_MAX_MISSING = 15
+# 1人あたり何フレームに1回 LSTM を回すか。READYになった人物は
+# **1回のバッチ推論((N,30,99))でまとめて**実行する(infer_lock占有の削減)
+AI_INFERENCE_INTERVAL = 5
+# 転倒確率が閾値以上がこの回数連続で "FALL !!!"(ai2.0既定は8)
+AI_FALL_CONFIRM_COUNT = 8
+# 転倒モデルのファイル名(ai_models/ 内)。
+# **2026-11-17 に正準名 fall_detection_lstm.keras へ ai2.0 の grouped+normalized
+# 版を置き換え済み**(旧単一人物版の重みは ai_models/backup/manual-20261117-133556/ に退避)。
+# `fall_detection_lstm_grouped_normalized.keras` は同一内容の参照コピーとして残置。
+# 旧運用へ戻す場合: 退避した旧ファイルを fall_detection_lstm.keras へ復元し、
+# AI_NORMALIZE_FALL_INPUT=False にする(正規化の有無はモデルと必ずセットで切り替える)。
+AI_FALL_MODEL_FILENAME = "fall_detection_lstm.keras"
+# 新モデル(grouped+normalized)は入力を腰中心・体幹尺度で正規化する。
+# core/training.py の build_fall_dataset も同じ正規化で学習するので、この2つは常に一致させる。
+AI_NORMALIZE_FALL_INPUT = True
+# 骨格描画の平滑化(EMA係数)。AI入力には影響せず描画だけ滑らかにする
+AI_SKELETON_SMOOTHING_ALPHA = 0.35
+# --- 速度ルール(第2の転倒検出器 / 2026-11-17) ---
+# LSTMとは別に「骨格の変化速度」だけで転倒を拾う安全網。LSTMとOR判定:
+#   ① window フレーム以内に roll_thr° 以上の急転倒 → ② 水平(horizontal)到達
+#   → ③ その姿勢が stay_frames フレーム続く(=起き上がらない)
+# train_data 実測: 傾き角速度 AUC=0.86 / 0.33秒ロール AUC=0.82。
+# 「物を拾う」は①②まで満たすが③で抑制される(実測 誤発火1/25本、速い転倒5/13本を捕捉)。
+# 効果: 突発的な崩れの検知がLSTM確認(約1.3秒)より早く、LSTM見逃しの保険になる。
+AI_VELOCITY_FALL_RULE = True
+AI_VELOCITY_ROLL_DEG = 25.0        # ①の閾値(度)
+AI_VELOCITY_ROLL_WINDOW = 10       # ①の窓(フレーム。10=約0.33秒 @30fps)
+AI_VELOCITY_HORIZONTAL_DEG = 60.0  # ②の水平判定(度)
+AI_VELOCITY_STAY_DEG = 45.0        # ③の「倒れたまま」判定(度)
+AI_VELOCITY_STAY_FRAMES = 15       # ③の維持フレーム(15=約0.5秒 @30fps)
+AI_VELOCITY_CONFIDENCE = 0.90      # ルール発火時の転倒確率(表示・Alert信頼度)
+# 発火のラッチ解除: 水平未満(=起き上がった)がこのフレーム数続いて初めて解除。
+# ラッチする理由: 急転倒イベントは約1秒で30フレーム履歴から滑り落ちるが、
+# 「倒れたまま」は転倒の継続。一時的信号だとLSTM確認(8回≈1.3秒)に届かない(実測で判明)。
+AI_VELOCITY_RELEASE_FRAMES = 10    # 約0.33秒 @30fps
 # 解析映像のJPEG品質(1〜100)
 AI_JPEG_QUALITY = 80
 # 異常検知から録画する秒数(0 で録画しない)

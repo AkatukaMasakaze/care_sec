@@ -617,6 +617,30 @@ python manage.py runserver ...       # 次回起動時に 前処理→学習→�
 - 設定: `AI_AUTO_RETRAIN` / `AI_RETRAIN_EPOCHS_FALL` / `AI_RETRAIN_EPOCHS_STATE` / `AI_RETRAIN_PROMOTE_MARGIN`
 - 手動確認・実行: `python manage.py ai_retrain --status` / `--force`
 
+### GUIツールで収集・再学習する(collect_gui.py / 2026-11-17追加)
+
+ai2.0 のコンソール収集(collect_data.py)を、care_sec の学習パイプラインに
+そのまま投入できるGUIに置き換えたもの。**サーバー(常時稼働AI)は止めてから**使う。
+
+`powershell
+.\.venv\Scripts\python.exe collect_gui.py     # ウィンドウ表示
+.\.venv\Scripts\pythonw.exe collect_gui.py    # コンソール無しで起動
+`
+
+| 領域 | できること |
+|---|---|
+| 接続 | カメラindex/backend(MSMF/DSHOW)を選んでプレビュー(骨格・Person番号・人数・REC状態) |
+| ラベル | normal/fall と**動作名**(STATE_BY_SUFFIX既知の名前を候補付きで選択可能) |
+| 収集 | 記録開始/停止ボタン。1人のみ検出なら 
+ormal_<動作名>.csv、複数人なら ..._personN.csv(ai_collect_dataと同一の行形式: 99値+ラベル+人物番号)。同名既存ファイルには**絶対に上書きしない**(_2連番)。31フレーム未満のセッションは警告 |
+| train_data | 一覧(フレーム数付き)/削除(確認付き)/フォルダを開く |
+| 再学習 | 「状態確認」= i_retrain --status、「今すぐ再学習」= i_retrain --force(候補→現行比較→劣化なしで自動反映)を別スレッドで実行しログを表示 |
+
+- 保存先は settings.AI_TRAIN_DATA_DIR(既定 	rain_data/)で、コマンド運用と完全に同一場所・同一形式
+- 収集後の反映は **①GUIの再学習ボタン** か **②サーバー再起動(自動再学習が指紋変更を検知)** のどちらでも可。
+  反映されたモデルはサーバー起動時に読み込まれる
+- 注意: runserver のAI常時稼働がカメラを掴んでいると開けません(エラーメッセージに表示)
+
 ### コマンドで手動で行う場合
 
 ```powershell

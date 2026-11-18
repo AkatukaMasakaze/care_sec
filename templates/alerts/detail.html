@@ -35,7 +35,7 @@
 
     <div class="card__header"><h2>AI検知情報</h2></div>
     <dl class="detail-list">
-      <dt>異常の種類</dt><dd><span class="chip chip--{{ alert.kind }}">{{ alert.kind_label }}</span></dd>
+      <dt>異常の種類</dt><dd><span class="chip chip--{{ alert.kind }}">{{ alert.kind_label }}</span>{% if alert.person_label %} <span class="chip">{{ alert.person_label }}</span>{% endif %}</dd>
       <dt>人物状態</dt><dd>{{ alert.get_detected_state_display }}</dd>
       <dt>AI信頼度</dt>
       <dd>

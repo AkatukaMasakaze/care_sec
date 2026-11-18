@@ -183,6 +183,10 @@ class Alert(models.Model):
     responded_at = models.DateTimeField("対応開始時刻", null=True, blank=True)
     resolved_at = models.DateTimeField("対応完了時刻", null=True, blank=True)
     is_false_positive = models.BooleanField("誤検知", default=False)
+    # 複数人物検知(ai2.0系統)では「どのPersonか」を保持する。
+    # クールダウンも人物単位で効かせるため、このフィールドで絞り込む
+    # (旧データ/単一人物検知のものは NULL のまま)。
+    person_id = models.IntegerField("人物ID", null=True, blank=True)
     # S3のPresigned URL(署名付き)は500〜1,000文字になるため text にする
     thumbnail_url = models.TextField("サムネイルURL", blank=True)
     responder = models.ForeignKey(
@@ -228,6 +232,11 @@ class Alert(models.Model):
         return int(round(self.confidence * 100)) if self.confidence is not None else None
 
     @property
+    def person_label(self):
+        """複数人物検知のときの「Person N」表示(単一/旧データは空)"""
+        return f"Person {self.person_id}" if self.person_id else ""
+
+    @property
     def display_thumbnail_url(self):
         """一覧・詳細で使うサムネイルURL(実画像を優先)
 
@@ -257,7 +266,10 @@ class Alert(models.Model):
 class AISettings(models.Model):
     """AI検知の設定(誤検知フィードバックで自動調整される)"""
     enabled = models.BooleanField("AI監視を稼働する", default=True)
-    fall_threshold = models.FloatField("転倒検知の信頼度閾値", default=0.75)
+    # 既定0.50: ai2.0系 grouped+normalized モデルの設計値(ai2.0 realtime_lstm.py の
+    # PREDICTION_THRESHOLD=0.5)。旧単一人物モデル時代の0.75は分布が合わず
+    # 見逃し率が悪化していた(実測: 窓レベル見逃し 25%→31%、実測2026-11-18)。
+    fall_threshold = models.FloatField("転倒検知の信頼度閾値", default=0.50)
     stillness_seconds = models.IntegerField("無動作検知の秒数", default=30)
     cooldown_seconds = models.IntegerField("アラート間クールダウン(秒)", default=300)
     sensitivity = models.FloatField("人物検出の感度", default=0.8)

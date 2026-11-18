@@ -5,9 +5,10 @@
 
 | 種別 | ファイル / フォルダ | 用途 |
 |---|---|---|
-| 推論(現行) | `pose_landmarker_full.task` | MediaPipe Pose(33ランドマーク抽出) |
-| 推論(現行) | `fall_detection_lstm.keras` | 転倒判定LSTM(入力 30フレーム×99値) |
-| 推論(現行) | `state_detection_lstm.keras` | 状態判定LSTM(立っている/座っている/…/転倒の8クラス) |
+| 推論(現行) | `pose_landmarker_full.task` | MediaPipe Pose(33ランドマーク抽出・最大5人) |
+| 推論(現行) | `fall_detection_lstm.keras` | 転倒判定LSTM。**2026-11-17 に ai2.0 の grouped+normalized 版を正準名へ置き換え済み**(入力は腰中心/体幹尺度の正規化。旧単一人物版は `backup/manual-20261117-133556/` に退避) |
+| 参照コピー | `fall_detection_lstm_grouped_normalized.keras` | 上の置き換え元と同一内容(由来の証跡。エンジンが読むのは正準名のみ) |
+| 推論(現行) | `state_detection_lstm.keras` | 状態判定LSTM(8クラス。**生の99値**で学習済み→正規化しない) |
 | 推論(現行) | `state_labels.npy` | 状態ラベル(上記8クラスの並び順) |
 | 学習の中間 | `candidates/` | `ai_train_*` が書き出す**未反映の候補モデル** |
 | 自動退避 | `backup/<日時>/` | `--promote` 時に置き換わった**旧モデル** |

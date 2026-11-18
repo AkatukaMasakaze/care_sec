@@ -320,7 +320,7 @@
         f["判定"].className = danger || row.status === "FALL" ? "is-danger"
           : (row.status === "NORMAL" ? "is-ok" : (row.low_fps ? "is-warn" : ""));
       }
-      f["状態"].textContent = row.state || "-";
+      f["状態"].textContent = (row.people > 1 ? row.people + "人: " : "") + (row.state || "-");
       f["解析fps"].textContent = row.fps ? row.fps + " fps" : "-";
       // AI間引き: 無人カメラは POSE を 1/probe 秒間隔に落としている(=人の探索だけ実行)
       if (f["AI"]) {
@@ -751,6 +751,7 @@
         : (phase === "error" ? "停止" : "待機中"));
       cell(typeof row.device === "number" ? "index " + row.device : "IP " + row.device);
       cell(row.state || "-");
+      cell(row.people ? row.people + "人" : "0人", row.people > 1 ? "is-ok" : "");
       cell(row.status_label || "-");
       if (row.low_fps) {
         cell((row.fps || 0) + " fps(低速/帯域不足)", "is-warn");

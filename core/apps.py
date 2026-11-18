@@ -186,7 +186,14 @@ class CoreConfig(AppConfig):
             try:
                 from core import retraining
 
-                readiness.note("model", "自動再学習を確認中…(ここで数秒〜数十秒かかることがあります)")
+                # ここは毎回「学習」ではなく、train_data の指紋(名前+更新時刻+サイズ)の
+                # **変更チェックだけ**。変わっていなければ 1 秒未満で素通りする。
+                # 学習が走る唯一の条件 = CSV を追加/更新した次回起動以降。
+                need, _finger, reason = retraining.needs_retrain()
+                if need:
+                    readiness.note("model", "自動再学習を実行します(%s)。数秒〜数十秒かかることがあります" % reason)
+                else:
+                    readiness.note("model", "自動再学習チェック: %s → 学習はスキップ(データが変わったときだけ学習します)" % reason)
                 retraining.run_startup_retraining()
                 readiness.note("model", "自動再学習の確認が完了しました(経過 %.1f秒)" % readiness.elapsed())
             except Exception as exc:  # noqa: BLE001 -学習失敗でWebアプリ/解析は止めない

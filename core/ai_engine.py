@@ -22,6 +22,7 @@ caregiver_safety/realtime_lstm.py の判定パイプライン
 tensorflow / mediapipe / PIL が未導入の環境でも Webアプリ自体は起動できるよう、
 外部ライブラリの import とモデル読み込みはすべて初回使用時(遅延)に行う。
 """
+import math
 import threading
 import time
 from collections import deque
@@ -37,9 +38,23 @@ from .models import AISettings, Alert, Camera, PersonState, Recording
 
 # caregiver_safety/realtime_lstm.py と同じ判定パラメータ
 SEQUENCE_LENGTH = 30
-FALL_CONFIRM_COUNT = 3
+FALL_CONFIRM_COUNT = 3   # 旧単一人物版の既定。settings.AI_FALL_CONFIRM_COUNT(既定8)が優先
 
 FOOT_INDICES = (27, 28, 29, 30, 31, 32)
+
+# --- 複数人物検知(ai2.0 系統)---
+# 顔ランドマーク(0〜10)は描画しない(AI入力にはそのまま使う)
+BODY_LANDMARK_START = 11
+# 肩・腰の visibility がこの値未満の人物は「顔だけ/体の欠け」扱いで対象外
+BODY_VISIBILITY_THRESHOLD = 0.30
+# 人物ごとの骨格色(display_id 順)。転倒中は赤に上書き
+PERSON_COLORS = [
+    (0, 255, 0),
+    (255, 150, 0),
+    (0, 255, 255),
+    (255, 0, 255),
+    (255, 255, 0),
+]
 
 # 無動作とみなす1フレームあたりのランドマーク移動量(正規化座標の平均)
 # 0.004 ≒ 画面の0.4%。これ未満なら「動いていない」と判定する
@@ -129,7 +144,13 @@ def _load_shared():
 
         model_dir = _model_dir()
         pose_path = model_dir / "pose_landmarker_full.task"
-        fall_path = model_dir / "fall_detection_lstm.keras"
+        # 転倒モデルは settings.AI_FALL_MODEL_FILENAME(grouped+normalized 版が既定)。
+        # ファイルが無い場合だけ旧名にフォールバックし、どちらも無ければ不足扱い。
+        fall_name = str(getattr(settings, "AI_FALL_MODEL_FILENAME", "fall_detection_lstm.keras"))
+        fall_path = model_dir / fall_name
+        if not fall_path.exists() and fall_name != "fall_detection_lstm.keras":
+            readiness.note("model", "転倒モデル %s が見つからないため旧モデルで起動します" % fall_name, "warn")
+            fall_path = model_dir / "fall_detection_lstm.keras"
         state_path = model_dir / "state_detection_lstm.keras"
         labels_path = model_dir / "state_labels.npy"
 
@@ -195,7 +216,9 @@ def _get_landmarker(device):
             vision.PoseLandmarkerOptions(
                 base_options=mp_python.BaseOptions(model_asset_path=shared["pose_path"]),
                 running_mode=vision.RunningMode.VIDEO,
-                num_poses=1,
+                # 複数人物検知(ai2.0)。1にすると旧単一人物動作だが、
+                # result.pose_landmarks はどのみちリストなのでエンジン側は共通処理
+                num_poses=max(1, int(getattr(settings, "AI_MAX_POSES", 5))),
             )
         )
         _landmarkers[device] = landmarker
@@ -279,6 +302,150 @@ def _mp_image(rgb_frame):
     return mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
 
 
+# ================= 複数人物検知のヘルパー(ai2.0 realtime_lstm.py 準拠) =================
+def _normalize_pose_vector(pose_data):
+    """99値 → 腰中心原点・体幹尺度(core/training.normalize_landmarks と同一計算)
+
+    grouped_normalized 転倒モデルはこれで学習されているため、推論も必ず同じ加工にする。
+    """
+    import numpy as np
+
+    lm = np.asarray(pose_data, dtype=np.float32).reshape(33, 3).copy()
+    hip_center = (lm[23] + lm[24]) / 2.0
+    shoulder_center = (lm[11] + lm[12]) / 2.0
+    lm -= hip_center
+    torso_scale = float(np.linalg.norm(shoulder_center - hip_center))
+    if torso_scale > 1e-6:
+        lm /= torso_scale
+    return lm.flatten().tolist()
+
+
+def _person_ok(landmarks):
+    """体幹(肩・腰)がちゃんと映っている人物か
+
+    顔だけ/大きく欠けた検出は Person として数えない(ai2.0の is_body_visible 相当)。
+    """
+    for index in (11, 12, 23, 24):
+        lm = landmarks[index]
+        if getattr(lm, "visibility", 1.0) < BODY_VISIBILITY_THRESHOLD:
+            return False
+        if not (0.0 <= lm.x <= 1.0 and 0.0 <= lm.y <= 1.0):
+            return False
+    shoulder_y = (landmarks[11].y + landmarks[12].y) / 2.0
+    hip_y = (landmarks[23].y + landmarks[24].y) / 2.0
+    return abs(hip_y - shoulder_y) > 0.08
+
+
+def _person_center(landmarks):
+    """腰中心(トラッキングと「左からPerson番号」の並び順用)"""
+    return ((landmarks[23].x + landmarks[24].x) / 2.0,
+            (landmarks[23].y + landmarks[24].y) / 2.0)
+
+
+def _person_bbox(landmarks, width, height):
+    """可視ランドマークを囲む矩形(頭上ラベルの位置に使う)"""
+    xs, ys = [], []
+    for lm in landmarks:
+        if getattr(lm, "visibility", 1.0) > BODY_VISIBILITY_THRESHOLD:
+            xs.append(int(lm.x * width))
+            ys.append(int(lm.y * height))
+    if not xs or not ys:
+        return None
+    return max(0, min(xs)), max(0, min(ys)), min(width - 1, max(xs)), min(height - 1, max(ys))
+
+
+def _foot_visible(landmarks):
+    """足(27〜32)のうち4点以上が画面内"""
+    visible = sum(
+        1 for idx in FOOT_INDICES
+        if getattr(landmarks[idx], "visibility", 1.0) > BODY_VISIBILITY_THRESHOLD
+        and 0.0 <= landmarks[idx].x <= 1.0
+        and 0.0 <= landmarks[idx].y <= 1.0
+    )
+    return visible >= 4
+
+
+def _torso_tilt(landmarks):
+    """体幹の傾き(度): 0=直立, 90=水平。肩中心〜腰中心のベクトルから算出
+
+    ランドマークは正規化座標(0..1)なので解像度に依存しない。
+    垂直からの角なので、人物の大きさ・位置が変わっても安定する
+    (train_data 実測でこの傾き変化のAUC=0.86、0.33秒ロールAUC=0.82)。
+    """
+    sx = (landmarks[11].x + landmarks[12].x) / 2.0
+    sy = (landmarks[11].y + landmarks[12].y) / 2.0
+    hx = (landmarks[23].x + landmarks[24].x) / 2.0
+    hy = (landmarks[23].y + landmarks[24].y) / 2.0
+    dx = abs(sx - hx)
+    dy = max(hy - sy, 1e-6)      # 肩が腰より上 = 直立方向
+    return math.degrees(math.atan2(dx, dy))
+
+
+def _velocity_fall_check(tilt_hist, roll_thr, window, horiz_thr, stay_deg, stay_frames):
+    """速度ルール: 急激に倒れ → 水平到達 → 起き上がらない を1つの条件にする
+
+    tilt_hist: 人物ごとの体幹傾き(度)のフレーム履歴(deque)。
+    実データ(train_data 38本)で評価した結果に基づく:
+      - 速度だけ(腰降下単独)は AUC 0.61 で弱い → 角度系を使う
+      - 「速く倒れた」だけでは 物を拾う動作(0.33sで47°)と衝突 →
+        「水平到達」+「そのまま起き上がらない」で誤発火を実測1/25本まで抑制
+    戻り値: (発火bool, 理由文字列)
+    """
+    arr = list(tilt_hist)
+    n = len(arr)
+    if n < window + stay_frames:
+        return False, ""
+    # いま水平に近い姿勢が stay_frames 続いている(=起き上がっていない)
+    if min(arr[-stay_frames:]) < stay_deg:
+        return False, ""
+    # 履歴中に window フレームで roll_thr° 以上の急転倒イベントがあったか
+    best_roll, ev = 0.0, -1
+    for i in range(window, n):
+        roll = arr[i] - arr[i - window]
+        if roll > best_roll:
+            best_roll, ev = roll, i
+    if best_roll < roll_thr:
+        return False, ""
+    # そのイベントの終わりに水平(horizontal)へ到達しているか
+    if arr[ev] < horiz_thr:
+        return False, ""
+    return True, "roll=%.0f°/%dF→%.0f°" % (best_roll, window, arr[ev])
+
+
+def _new_track(uid, center):
+    """1人物分の追跡状態(ai2.0 の create_track 相当)
+
+    sequence      : 正規化99値のdeque(転倒LSTM入力)
+    state_sequence: 生99値のdeque(状態LSTM入力 — 状態モデルは非正規化で学習済み)
+    tilt_hist     : 体幹傾きの履歴(速度ルール用)
+    """
+    return {
+        "id": uid,
+        "display_id": uid,
+        "center": center,
+        "sequence": deque(maxlen=SEQUENCE_LENGTH),
+        "state_sequence": deque(maxlen=SEQUENCE_LENGTH),
+        "tilt_hist": deque(maxlen=SEQUENCE_LENGTH),
+        "velocity_fall": False,
+        "velocity_why": "",
+        "velocity_up_count": 0,
+        "status": "WAITING",
+        "state_label": "判定中",
+        "danger_percent": None,
+        "fall_count": 0,
+        "fall_latched": False,
+        "foot_visible": False,
+        "missing": 0,
+        "inference_counter": 0,
+        "prev_points": None,
+        "still_since": None,
+        "still_seconds": 0,
+        "still_alerted": False,
+        "smooth": None,
+        "bbox": None,
+    }
+
+
 # ================= 1台分の解析ランタイム =================
 class _CameraRuntime:
     """1カメラ分の解析スレッド・視聴者数・最新映像・状態を持つ"""
@@ -312,6 +479,8 @@ class _CameraRuntime:
             "foot_visible": False,
             "still_seconds": 0,
             "sequence_frames": 0,
+            "people": 0,
+            "people_detail": [],
             "fps": 0.0,
             "person_present": False,
             "ai_throttled": False,
@@ -466,11 +635,9 @@ class _CameraRuntime:
         interval = 1.0 / fps_limit
         quality = int(getattr(settings, "AI_JPEG_QUALITY", 80))
 
-        sequence = deque(maxlen=SEQUENCE_LENGTH)
         started = time.monotonic()
         last_analysis = 0.0
         frame_timestamp = 0
-        prev_points = None
 
         # --- 無人カメラの間引き(AI最適化)---
         # 実測で POSE が 31.6ms/枚(全工程 49.6ms の64%)。人が映っていないフレームで
@@ -490,16 +657,38 @@ class _CameraRuntime:
         ai = AISettings.load()
         ai_loaded_at = started
 
-        # 判定状態
+        # 判定状態(人物単位。ai2.0 realtime_lstm.py の tracks 辞書相当)
+        tracks = {}
+        next_track_uid = 1
+        # 画面全体の集約表示は「最悪の人物」を反映する
         status = "WAITING (0/30)"
         state_label = "判定中"
         danger_percent = None
         foot_visible = False
-        fall_count = 0
-        fall_latched = False       # 転倒アラートを一度出したら解除まで抑制
-        still_since = None         # 最後に「動いている」と判定した時刻
-        still_alerted = False      # 無動作アラートを出したら移動が再開するまで抑制
         still_seconds = 0
+        sequence_frames = 0
+        people = 0
+        people_detail = []
+
+        # --- ai2.0 統合パラメータ ---
+        confirm_count = max(1, int(getattr(settings, "AI_FALL_CONFIRM_COUNT", FALL_CONFIRM_COUNT)))
+        infer_interval = max(1, int(getattr(settings, "AI_INFERENCE_INTERVAL", 5)))
+        track_distance = float(getattr(settings, "AI_TRACK_DISTANCE_THRESHOLD", 0.18))
+        track_max_missing = max(1, int(getattr(settings, "AI_TRACK_MAX_MISSING", 15)))
+        normalize_fall = bool(getattr(settings, "AI_NORMALIZE_FALL_INPUT", True))
+        process_w = max(64, int(getattr(settings, "AI_POSE_PROCESS_WIDTH", 320)))
+        process_h = max(48, int(getattr(settings, "AI_POSE_PROCESS_HEIGHT", 240)))
+        smoothing = min(1.0, max(0.0, float(getattr(settings, "AI_SKELETON_SMOOTHING_ALPHA", 0.35))))
+
+        # --- 速度ルール(第2の転倒検出器: 急激な崩れをLSTMの安全網としてOR判定) ---
+        velocity_rule = bool(getattr(settings, "AI_VELOCITY_FALL_RULE", True))
+        v_roll_thr = float(getattr(settings, "AI_VELOCITY_ROLL_DEG", 25.0))
+        v_window = max(2, int(getattr(settings, "AI_VELOCITY_ROLL_WINDOW", 10)))
+        v_horiz_thr = float(getattr(settings, "AI_VELOCITY_HORIZONTAL_DEG", 60.0))
+        v_stay_deg = float(getattr(settings, "AI_VELOCITY_STAY_DEG", 45.0))
+        v_stay_frames = max(2, int(getattr(settings, "AI_VELOCITY_STAY_FRAMES", 15)))
+        v_confidence = min(0.99, max(0.0, float(getattr(settings, "AI_VELOCITY_CONFIDENCE", 0.90))))
+        v_release_frames = max(2, int(getattr(settings, "AI_VELOCITY_RELEASE_FRAMES", 10)))
 
         # 統計
         window_start = started
@@ -610,7 +799,14 @@ class _CameraRuntime:
                     empty_throttling = True
 
             if run_pose:
-                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                # ai2.0準拠: POSE は縮小画像(既定320x240)で打つ。
+                # ランドマークは 0..1 の正規化座標なので、描画もAI入力も解像度に依存しない。
+                if (width, height) != (process_w, process_h):
+                    process_frame = cv2.resize(
+                        frame, (process_w, process_h), interpolation=cv2.INTER_AREA)
+                else:
+                    process_frame = frame
+                rgb_frame = cv2.cvtColor(process_frame, cv2.COLOR_BGR2RGB)
                 # MediaPipe VIDEOモードは「単調増加」のタイムスタンプを要求する。
                 # 再開時に0へ巻き戻らないよう monotonic の時刻を使い、同値も防ぐ
                 frame_timestamp = max(int(time.monotonic() * 1000), frame_timestamp + 1)
@@ -619,121 +815,256 @@ class _CameraRuntime:
             else:
                 result = None
 
+            # ---------------- 検出 → 人物トラック ----------------
+            # 顔だけ/体幹欠けの検出は Person に数えない(ai2.0の is_body_visible 相当)
+            detections = []
             if result is not None and result.pose_landmarks:
-                person_present = True
-                last_person_seen = now
-                landmarks = result.pose_landmarks[0]
+                for landmarks in result.pose_landmarks:
+                    if not _person_ok(landmarks):
+                        continue
+                    bbox = _person_bbox(landmarks, width, height)
+                    if bbox is None:
+                        continue
+                    detections.append({
+                        "landmarks": landmarks,
+                        "center": _person_center(landmarks),
+                        "bbox": bbox,
+                    })
+            # 左から Person 1..N(ai2.0と同じ並び順)
+            detections.sort(key=lambda d: d["center"][0])
+
+            for track in tracks.values():
+                track["missing"] += 1
+
+            matched_ids = set()
+            visible_tracks = []
+            for display_index, detection in enumerate(detections, start=1):
+                cx, cy = detection["center"]
+
+                # 腰中心が最も近い未マッチトラック = 同じ人(ai2.0のグリーディ照合)
+                best_track = None
+                best_distance = track_distance
+                for track in tracks.values():
+                    if track["id"] in matched_ids:
+                        continue
+                    dx, dy = cx - track["center"][0], cy - track["center"][1]
+                    distance = (dx * dx + dy * dy) ** 0.5
+                    if distance < best_distance:
+                        best_distance = distance
+                        best_track = track
+
+                if best_track is not None:
+                    track = best_track
+                else:
+                    track = _new_track(next_track_uid, (cx, cy))
+                    tracks[next_track_uid] = track
+                    next_track_uid += 1
+                matched_ids.add(track["id"])
+
+                landmarks = detection["landmarks"]
+                track["display_id"] = display_index
+                track["center"] = (cx, cy)
+                track["bbox"] = detection["bbox"]
+                track["missing"] = 0
 
                 # 33ランドマーク × x,y,z = 99値
                 pose_data = []
                 points = []
-                for landmark in landmarks:
-                    pose_data.extend([landmark.x, landmark.y, landmark.z])
-                    points.append((landmark.x, landmark.y))
-                sequence.append(pose_data)
+                for lm in landmarks:
+                    pose_data.extend([lm.x, lm.y, lm.z])
+                    points.append((lm.x, lm.y))
+                # 転倒系列は正規化(新モデルの学習仕様)、状態系列は生の99値
+                track["sequence"].append(
+                    _normalize_pose_vector(pose_data) if normalize_fall else pose_data)
+                track["state_sequence"].append(pose_data)
 
-                # --- 無動作の判定(前フレームとの移動量) ---
-                if prev_points is None:
+                # --- 人物ごとの無動作(前フレームとの移動量) ---
+                if track["prev_points"] is None:
                     moving = True
                 else:
                     move = sum(
                         abs(a[0] - b[0]) + abs(a[1] - b[1])
-                        for a, b in zip(points, prev_points)
-                    ) / len(points)
+                        for a, b in zip(points, track["prev_points"])
+                    ) / max(1, len(points))
                     moving = move >= STILLNESS_MOVE_THRESHOLD
-                prev_points = points
-
+                track["prev_points"] = points
                 if moving:
-                    still_since = time.monotonic()
-                    still_alerted = False
-                elif still_since is None:
-                    still_since = time.monotonic()
-                still_seconds = int(time.monotonic() - still_since)
+                    track["still_since"] = now
+                    track["still_alerted"] = False
+                elif track["still_since"] is None:
+                    track["still_since"] = now
+                track["still_seconds"] = int(now - track["still_since"])
 
-                # --- 足が画面内にあるか ---
-                visible_foot = sum(
-                    1 for idx in FOOT_INDICES
-                    if 0.0 <= landmarks[idx].x <= 1.0 and 0.0 <= landmarks[idx].y <= 1.0
-                )
-                foot_visible = visible_foot >= 4
+                track["foot_visible"] = _foot_visible(landmarks)
 
-                # --- 骨格の描画(見る人がいる / 録画中のときだけ) ---
-                if draw:
-                    for connection in pose_connections:
-                        start, end = landmarks[connection.start], landmarks[connection.end]
-                        x1, y1 = int(start.x * width), int(start.y * height)
-                        x2, y2 = int(end.x * width), int(end.y * height)
-                        if 0 <= x1 < width and 0 <= y1 < height and 0 <= x2 < width and 0 <= y2 < height:
-                            cv2.line(frame, (x1, y1), (x2, y2), (0, 255, 255), 3, cv2.LINE_AA)
-                    for landmark in landmarks:
-                        x, y = int(landmark.x * width), int(landmark.y * height)
-                        if 0 <= x < width and 0 <= y < height:
-                            cv2.circle(frame, (x, y), 5, (0, 255, 0), -1, cv2.LINE_AA)
-
-                # --- 30フレームたまったら予測 ---
-                if len(sequence) == SEQUENCE_LENGTH:
-                    inputs = np.expand_dims(np.array(sequence, dtype=np.float32), axis=0)
-                    # Kerasモデルは複数カメラで共有しているため直列化(推論は約7ms)
-                    with infer_lock:
-                        probability = float(fall_infer(inputs)[0][0])
-                        state_id = int(np.argmax(state_infer(inputs)[0]))
-                    danger_percent = probability * 100.0
-
-                    if probability >= threshold:
-                        status = "FALL"
-                        fall_count += 1
+                # 速度ルール: 体幹傾きの履歴を積んで毎フレーム評価(引き算だけのコスト)
+                # 一度発火したら「倒れたまま」の間はラッチする。
+                # 理由: 急転倒イベント自体は30フレーム(~1秒)で履歴窓から滑り落ちるため、
+                # 一時的信号のままだとLSTM確認(8回≈1.3秒)に到底届かない。
+                # 「倒れた→水平のまま」は物理的に転倒継続なのでラッチが正しい。
+                if velocity_rule:
+                    tilt_now = _torso_tilt(landmarks)
+                    track["tilt_hist"].append(tilt_now)
+                    if track["velocity_fall"]:
+                        if tilt_now < v_stay_deg:
+                            track["velocity_up_count"] += 1
+                            if track["velocity_up_count"] >= v_release_frames:
+                                # 起き上がった(立て直しが一定フレーム続く)
+                                track["velocity_fall"] = False
+                                track["velocity_why"] = ""
+                                track["velocity_up_count"] = 0
+                        else:
+                            track["velocity_up_count"] = 0
                     else:
-                        status = "NORMAL"
-                        fall_count = 0
+                        ok, why = _velocity_fall_check(
+                            track["tilt_hist"], v_roll_thr, v_window,
+                            v_horiz_thr, v_stay_deg, v_stay_frames)
+                        if ok:
+                            track["velocity_fall"] = True
+                            track["velocity_why"] = why
+                            track["velocity_up_count"] = 0
+                            print(f"[RealtimeAI:{device}] 速度ルール発火: "
+                                  f"Person {track['display_id']} ({why})")
 
-                    if fall_count >= FALL_CONFIRM_COUNT:
-                        status = "FALL !!!"
-
-                    predicted_state = state_labels[state_id]
-                    state_label = "転倒" if status == "FALL !!!" else predicted_state
+                # 骨格描画用のEMA平滑化(AI入力には影響しない)
+                current = np.asarray(pose_data, dtype=np.float32).reshape(33, 3)
+                if track["smooth"] is None:
+                    track["smooth"] = current.copy()
                 else:
-                    status = f"WAITING ({len(sequence)}/{SEQUENCE_LENGTH})"
-                    state_label = "判定中"
-                    danger_percent = None
-                    fall_count = 0
+                    track["smooth"] = track["smooth"] * (1.0 - smoothing) + current * smoothing
+
+                visible_tracks.append(track)
+
+            # しばらく検出されなかった人物は削除(一時的な遮挡は系列ごと保持される)
+            for uid in [t["id"] for t in tracks.values() if t["missing"] > track_max_missing]:
+                del tracks[uid]
+
+            person_present = bool(visible_tracks)
+            if person_present:
+                last_person_seen = now
+
+            # ---------------- 人物まとめてバッチ推論 ----------------
+            # 1人ずつ毎回ではなく、READYになった人物を **1回の (N,30,99) 推論**で処理。
+            # infer_lock の直列占有が台数×人数から (人数/interval) 分の1に減る
+            # (第37章の実測「4台でLSTM直列110%」へのai2.0側の回答)。
+            ready_tracks = []
+            for track in visible_tracks:
+                if len(track["sequence"]) < SEQUENCE_LENGTH:
+                    track["status"] = "WAITING"
+                    track["fall_count"] = 0
+                    continue
+                track["inference_counter"] += 1
+                if track["inference_counter"] >= infer_interval:
+                    track["inference_counter"] = 0
+                    ready_tracks.append(track)
+
+            if ready_tracks:
+                fall_inputs = np.asarray(
+                    [list(t["sequence"]) for t in ready_tracks], dtype=np.float32)
+                state_inputs = np.asarray(
+                    [list(t["state_sequence"]) for t in ready_tracks], dtype=np.float32)
+                with infer_lock:
+                    fall_probs = fall_infer(fall_inputs)
+                    state_probs = state_infer(state_inputs)
+                for i, track in enumerate(ready_tracks):
+                    probability = float(fall_probs[i][0])
+                    # 速度ルール発火は「確実な転倒票」としてLSTMとOR判定する
+                    # (信頼度は表示上も v_confidence 以上に見えるようにする)
+                    if velocity_rule and track["velocity_fall"]:
+                        probability = max(probability, v_confidence)
+                    track["danger_percent"] = probability * 100.0
+                    if probability >= threshold:
+                        track["fall_count"] += 1
+                        track["status"] = "FALL"
+                    else:
+                        track["fall_count"] = 0
+                        track["status"] = "NORMAL"
+                    if track["fall_count"] >= confirm_count:
+                        track["status"] = "FALL !!!"
+                    state_id = int(np.argmax(state_probs[i]))
+                    predicted_state = (
+                        state_labels[state_id] if state_id < len(state_labels) else "不明")
+                    track["state_label"] = (
+                        "転倒" if track["status"] == "FALL !!!" else predicted_state)
+
+            # ---------------- 画面全体の表示は「最悪の人物」 ----------------
+            people = len(visible_tracks)
+            if visible_tracks:
+                fall_tracks = [t for t in visible_tracks if t["status"] == "FALL !!!"]
+                danger_tracks = [t for t in visible_tracks if t["status"] == "FALL"]
+                if fall_tracks:
+                    worst = fall_tracks[0]
+                    status = "FALL !!!"
+                elif danger_tracks:
+                    worst = danger_tracks[0]
+                    status = "FALL"
+                else:
+                    judged = [t for t in visible_tracks if t["status"] == "NORMAL"]
+                    if judged:
+                        worst = max(judged, key=lambda t: t["danger_percent"] or 0.0)
+                        status = "NORMAL"
+                    else:
+                        worst = max(visible_tracks, key=lambda t: len(t["sequence"]))
+                        status = "WAITING"
+                state_label = worst["state_label"]
+                danger_percent = worst["danger_percent"]
+                foot_visible = any(t["foot_visible"] for t in visible_tracks)
+                still_seconds = max(t["still_seconds"] for t in visible_tracks)
+                sequence_frames = max(len(t["sequence"]) for t in visible_tracks)
+                if status == "WAITING":
+                    status = f"WAITING ({sequence_frames}/{SEQUENCE_LENGTH})"
+                people_detail = [
+                    {
+                        "id": t["display_id"],
+                        "status": t["status"],
+                        "state": t["state_label"],
+                        "danger": round(t["danger_percent"], 1)
+                        if t["danger_percent"] is not None else None,
+                        "velocity_fall": bool(t["velocity_fall"]),
+                    }
+                    for t in visible_tracks
+                ]
             else:
                 # 人が映っていない(または間引き中で POSE を打っていない)
-                if result is not None:
-                    person_present = False   # last_person_seen は「最後に実際に見た時刻」のまま
-                sequence.clear()
-                prev_points = None
-                fall_count = 0
-                danger_percent = None
-                still_since = None
-                still_seconds = 0
-                foot_visible = False
+                # トラック自体は track_max_missing まで系列を保持するので、
+                # 人が戻っても WAITING からやり直しにならない
                 status = "NO PERSON"
                 state_label = "判定中"
+                danger_percent = None
+                foot_visible = False
+                still_seconds = 0
+                sequence_frames = 0
+                people_detail = []
 
             # ---------------- 異常検知(Alert作成 → /api/alerts/ 通知) ----------------
             alert_info = None
-            if status == "FALL !!!" and not fall_latched:
-                # 信頼度は ai2 の規約どおり 0.0〜1.0 で保存する
-                alert_info = _raise_alert(
-                    device, Alert.Kind.FALL, (danger_percent or 0.0) / 100.0,
-                    PersonState.LYING, ai, frame=frame,
-                )
-                fall_latched = True
-            if fall_count == 0:
-                fall_latched = False
+            # 転倒: **人物ごとに1件**(ラッチも人物単位。2人目の転倒は黙らない)
+            for track in visible_tracks:
+                if track["status"] == "FALL !!!" and not track["fall_latched"]:
+                    # 信頼度は ai2 の規約どおり 0.0〜1.0 で保存する
+                    alert_info = _raise_alert(
+                        device, Alert.Kind.FALL, (track["danger_percent"] or 0.0) / 100.0,
+                        PersonState.LYING, ai, frame=frame,
+                        person_id=track["display_id"],
+                    ) or alert_info
+                    track["fall_latched"] = True
+                if track["fall_count"] == 0:
+                    track["fall_latched"] = False
 
-            if (
-                status not in ("FALL !!!", "FALL", "NO PERSON")
-                and still_seconds >= ai.stillness_seconds
-                and not still_alerted
-                and danger_percent is not None
-            ):
-                confidence = min(0.99, 0.55 + still_seconds / 200)
-                alert_info = _raise_alert(
-                    device, Alert.Kind.SUSPICIOUS, confidence,
-                    STATE_TO_PERSON_STATE.get(state_label, PersonState.UNKNOWN), ai, frame=frame,
-                )
-                still_alerted = True
+            # 無動作: いずれかの人物が閾値超(その人物で1件)
+            for track in visible_tracks:
+                if (
+                    track["status"] == "NORMAL"
+                    and track["still_seconds"] >= ai.stillness_seconds
+                    and not track["still_alerted"]
+                ):
+                    confidence = min(0.99, 0.55 + track["still_seconds"] / 200)
+                    alert_info = _raise_alert(
+                        device, Alert.Kind.SUSPICIOUS, confidence,
+                        STATE_TO_PERSON_STATE.get(track["state_label"], PersonState.UNKNOWN),
+                        ai, frame=frame, person_id=track["display_id"],
+                    ) or alert_info
+                    track["still_alerted"] = True
 
             # 検知できたら録画開始(検知後 record_seconds 秒間)
             if alert_info is not None and record_seconds > 0:
@@ -749,28 +1080,37 @@ class _CameraRuntime:
                     "height": height,
                 }
 
-            # ---------------- overlay描画 + JPEG化(見る人がいる時だけ) ----------------
+            # ---------------- JPEG化(見る人がいる時だけ) ----------------
+            # 2026-11-17 ご要望により、映像への上書きテキスト(タイトル/状態/判定/
+            # 危険度/足/無動作、人物ごとの頭上ラベル)は描画しない。
+            # 骨格・バウンディングボックス・転倒中の赤枠は「写っているもの」の
+            # 可視化なので残す。ページ側(デバッグカード等)の状態表示は無変更。
             buf = None
             if draw:
-                if status in ("FALL", "FALL !!!"):
-                    status_display, status_color = "FALL", (0, 0, 255)
-                elif status == "NORMAL":
-                    status_display, status_color = "NORMAL", (0, 255, 0)
-                else:
-                    status_display, status_color = "NORMAL", (0, 255, 255)
+                for track in visible_tracks:
+                    is_fall = track["status"] == "FALL !!!"
+                    color = (0, 0, 255) if is_fall else PERSON_COLORS[
+                        (track["display_id"] - 1) % len(PERSON_COLORS)]
+                    smooth = track["smooth"]
 
-                danger_text = f"危険度：{danger_percent:.2f}%" if danger_percent is not None else "危険度：--"
-                foot_text = "足：OK" if foot_visible else "足：画面外"
-                foot_color = (0, 255, 0) if foot_visible else (0, 165, 255)
+                    # 骨格線(顔の線は描かない — AI入力には顔を含むまま使用)
+                    for connection in pose_connections:
+                        s_idx, e_idx = connection.start, connection.end
+                        if s_idx < BODY_LANDMARK_START or e_idx < BODY_LANDMARK_START:
+                            continue
+                        x1, y1 = int(smooth[s_idx][0] * width), int(smooth[s_idx][1] * height)
+                        x2, y2 = int(smooth[e_idx][0] * width), int(smooth[e_idx][1] * height)
+                        if 0 <= x1 < width and 0 <= y1 < height and 0 <= x2 < width and 0 <= y2 < height:
+                            cv2.line(frame, (x1, y1), (x2, y2), color, 2, cv2.LINE_AA)
+                    for point_index in range(BODY_LANDMARK_START, 33):
+                        x, y = int(smooth[point_index][0] * width), int(smooth[point_index][1] * height)
+                        if 0 <= x < width and 0 <= y < height:
+                            cv2.circle(frame, (x, y), 3, color, -1, cv2.LINE_AA)
 
-                _draw_text(frame, cv2, "Caregiver Safety Monitor", (15, 22), scale=0.45, thickness=1)
-                _draw_japanese_overlay(frame, cv2, [
-                    (f"状態：{state_label}", (15, 30), (255, 255, 255)),
-                    (f"判定：{status_display}", (15, 54), status_color),
-                    (danger_text, (15, 78), (255, 255, 255)),
-                    (foot_text, (15, 102), foot_color),
-                    (f"無動作：{still_seconds}秒", (15, 126), (255, 255, 255)),
-                ])
+                    bbox = track["bbox"]
+                    if bbox:
+                        x_min, y_min, x_max, y_max = bbox
+                        cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), color, 2)
 
                 if status == "FALL !!!":
                     cv2.rectangle(frame, (5, 5), (width - 6, height - 6), (0, 0, 255), 6)
@@ -810,7 +1150,10 @@ class _CameraRuntime:
                 "danger_percent": round(danger_percent, 2) if danger_percent is not None else None,
                 "foot_visible": foot_visible,
                 "still_seconds": still_seconds,
-                "sequence_frames": len(sequence),
+                "sequence_frames": sequence_frames,
+                # 複数人物検知(ai2.0): 人数と人物ごとの内訳
+                "people": people,
+                "people_detail": people_detail,
                 "fps": current_fps,
                 # AI間引きの状況: 無人が続いているカメラは POSE を 1/probe 秒間隔に落とす
                 "person_present": person_present,
@@ -889,8 +1232,13 @@ def _save_alert_thumbnail(kind, frame):
         return None
 
 
-def _raise_alert(device, kind, confidence, person_state, ai, frame=None):
-    """ai2 の方式でアラートを作成する(クールダウン適用 / 失敗しても解析は止めない)"""
+def _raise_alert(device, kind, confidence, person_state, ai, frame=None, person_id=None):
+    """ai2 の方式でアラートを作成する(クールダウン適用 / 失敗しても解析は止めない)
+
+    person_id(複数人物検知のPerson番号)を渡すと、
+    **クールダウンも人物単位**で判定する(2人目が転倒したら即別アラート)。
+    単一人物/旧データ相当の None はカメラ単位の従来判定。
+    """
     try:
         # 「AI監視」が停止中(設定ページ)はアラートを作らない
         if not ai.enabled:
@@ -902,7 +1250,10 @@ def _raise_alert(device, kind, confidence, person_state, ai, frame=None):
             return None
         now = timezone.now()
 
-        last = Alert.objects.filter(camera=camera).order_by("-occurred_at").first()
+        cooldown_scope = Alert.objects.filter(camera=camera)
+        if person_id is not None:
+            cooldown_scope = cooldown_scope.filter(person_id=person_id)
+        last = cooldown_scope.order_by("-occurred_at").first()
         if last is not None and (now - last.occurred_at).total_seconds() < ai.cooldown_seconds:
             return None
 
@@ -919,8 +1270,10 @@ def _raise_alert(device, kind, confidence, person_state, ai, frame=None):
             confidence=round(float(confidence), 2),
             detected_state=person_state,
             thumbnail_url=thumbnail,
+            person_id=person_id,
         )
-        print(f"[RealtimeAI:{device}] 異常検知: {alert.get_kind_display()} @ {camera.name} "
+        print(f"[RealtimeAI:{device}] 異常検知: {alert.get_kind_display()}"
+              f"{f'({alert.person_label})' if person_id else ''} @ {camera.name} "
               f"(信頼度: {alert.confidence})")
         return {
             "id": alert.id,
@@ -1159,6 +1512,8 @@ class RealtimeAIEngine:
                     "person_present": runtime.status.get("person_present", False),
                     "ai_throttled": runtime.status.get("ai_throttled", False),
                     "pose_fps": runtime.status.get("pose_fps"),
+                    # 複数人物検知(ai2.0)
+                    "people": runtime.status.get("people", 0),
                     "persistent": runtime.persistent,
                     # 常時稼働ぶんの自己視聴は除いて表示する
                     "viewers": max(0, runtime.viewers - (1 if runtime.persistent else 0)),
@@ -1212,6 +1567,12 @@ class RealtimeAIEngine:
                 if device.get("available", True)
             ]
             if not found:
+                # 検知中(pending)や結果なしのときに 0..N の総当たりへ転けない。
+                # 過去に見つけた index だけ準備する(2026-11-18: ログの
+                # 「index 7: 開けませんでした」連発はここが毎回総当たりだったため)
+                found = [int(index) for index in camera_service.known_indices()]
+            if not found:
+                # 本当に初めて(まだ何も見つけていない)ときだけ範囲探索する
                 found = list(range(int(getattr(settings, "DEBUG_CAMERA_MAX_DEVICES", 4))))
             candidates = sorted(found, reverse=True)
 

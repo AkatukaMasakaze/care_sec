@@ -44,6 +44,14 @@ class Command(BaseCommand):
         if len(X) == 0:
             raise CommandError("データセットが空です(ai_prepare_dataset を再実行してください)")
 
+        # groups.npy がある(ai2.0系パイプライン)なら CSV単位で分割して評価の甘さを排除する
+        groups_path = training.dataset_path("groups.npy")
+        groups = np.load(groups_path) if groups_path.exists() else None
+        if groups is not None and len(groups) != len(X):
+            self.stdout.write(self.style.WARNING(
+                "groups.npy と X.npy の件数が不一致です(窓分割で再学習します)"))
+            groups = None
+
         self.stdout.write("=" * 30)
         self.stdout.write("転倒判定LSTM 再学習")
         self.stdout.write("=" * 30)
@@ -53,6 +61,7 @@ class Command(BaseCommand):
             X, y,
             epochs=options["epochs"], batch_size=options["batch_size"],
             test_size=options["test_size"], seed=options["seed"],
+            groups=groups,
         )
         self.stdout.write("")
         self.stdout.write(f"学習 {metrics['train_count']} / 検証 {metrics['test_count']}")

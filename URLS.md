@@ -147,6 +147,7 @@ urlpatterns = [
 |---|---|---|
 | `open_alert_count` | int | 未対応の異常件数(トップバー&サイドバーのバッジ) |
 | `latest_open_alert` | object\|None | 最新未対応異常。`kind_label / location / occurred_at` を使用(バナー表示) |
+| `ai_monitor_enabled` | bool | サイドバーの「AI監視 稼働中/停止中」 |
 
 > 全ページで使うため、コンテキストプロセッサで渡すのがおすすめです:
 > ```python

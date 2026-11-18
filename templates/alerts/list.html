@@ -68,7 +68,7 @@
 
     <div class="alert-card__body">
       <div class="alert-card__head">
-        <h2><a href="{% url 'alert_detail' alert.id %}">{{ alert.kind_label }}</a></h2>
+        <h2><a href="{% url 'alert_detail' alert.id %}">{{ alert.kind_label }}{% if alert.person_label %} <small class="muted">({{ alert.person_label }})</small>{% endif %}</a></h2>
         <span class="chip chip--{{ alert.status }}" data-alert-status="{{ alert.id }}">{{ alert.status_label }}</span>
         {% if alert.confidence_percent is not None %}<span class="alert-card__confidence">AI信頼度 {{ alert.confidence_percent }}%</span>{% endif %}
       </div>

@@ -36,7 +36,7 @@ class Command(BaseCommand):
         self.stdout.write(f"STRIDE      : {stride}")
         self.stdout.write("")
 
-        X, y, rows, skipped = training.build_fall_dataset(options["data_dir"], stride=stride)
+        X, y, rows, skipped, groups = training.build_fall_dataset(options["data_dir"], stride=stride)
 
         for row in rows:
             label = "NORMAL" if row["label"] == 0 else "FALL"
@@ -65,6 +65,8 @@ class Command(BaseCommand):
 
         np.save(training.dataset_path("X.npy"), X)
         np.save(training.dataset_path("y.npy"), y)
+        np.save(training.dataset_path("groups.npy"), groups)
         self.stdout.write(self.style.SUCCESS(
-            f"\n保存完了: {training.dataset_path('X.npy')} / {training.dataset_path('y.npy')}"))
+            f"\n保存完了: {training.dataset_path('X.npy')} / {training.dataset_path('y.npy')} "
+            f"/ groups.npy(CSV単位分割用 {len(set(groups.tolist()))}グループ)"))
         self.stdout.write("次: python manage.py ai_train_fall")
