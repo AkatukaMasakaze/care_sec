@@ -94,6 +94,22 @@
     return Math.round(sec / 3600) + '時間前';
   }
 
+  /* ---------- 情報バーの時計 ----------
+   * 2026-11-19 復旧: 通知再設計(第41章)で app.js を書き直したときこのブロックの
+   * 移植が漏れ、トップバーが "----/--/-- --:--:--" のまま死んでいた。
+   */
+  var clock = document.getElementById('clock');
+  if (clock) {
+    var clockTick = function () {
+      var d = new Date();
+      clock.textContent = d.getFullYear() + '/' + pad2(d.getMonth() + 1) + '/' +
+        pad2(d.getDate()) + ' ' + pad2(d.getHours()) + ':' +
+        pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
+    };
+    clockTick();
+    setInterval(clockTick, 1000);
+  }
+
   /* ---------- Web Notifications API(OS通知) ---------- */
   function requestNotificationPermission() {
     if (!('Notification' in window)) {
