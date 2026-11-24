@@ -18,6 +18,19 @@ pillow==12.3.0
 # 異常検知からの自動録画(mp4 H.264書き出し、ffmpegバイナリ同梱)
 imageio-ffmpeg==0.8.1
 
+# CLIPアラート検証官(2026-11-24 / core/ai_engine.py::_clip_verify_lying)
+# ※ torch/torchvision はPyTorch公式の **CPU専用index** からの導入(既定のPyPI版は
+#    CUDA同梱で巨大)。`+cpu` バージョンはPyPIに無いのでこの行が必要:
+#    pip install --index-url https://download.pytorch.org/whl/cpu torch==2.15.0 torchvision==0.29.2
+#    pip install transformers==5.24.0
+#    (--index-url はPyPIを"置換"するので torch系と transformers は別コマンドで。過去の教訓)
+#    モデル本体 openai/clip-vit-base-patch32(~600MB)は初回使用時にHuggingFaceへ
+#    DLされユーザーキャッシュに入るため、オフライン再建時は事前取得が必要。
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.15.0+cpu
+torchvision==0.29.2+cpu
+transformers==5.24.0
+
 # AIモデルの再学習(追加学習)用パイプライン: manage.py ai_prepare_* / ai_train_* / ai_check_model
 pandas==3.1.1
 scikit-learn==1.9.1
