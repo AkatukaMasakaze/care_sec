@@ -73,6 +73,10 @@ def run_startup_retraining(force=False):
         _log(f"{reason} → 学習スキップ(指紋チェックのみ。毎回学習しているわけではありません)")
         return False
 
+    # train_dataset/ などが存在しない環境(新規コピー等)でも落ちない
+    # (実測: ai2_bak で X.npy 保存時に FileNotFoundError)
+    training.ensure_dirs()
+
     _log(f"再学習を開始します({reason}) / 対象 {finger['files']}ファイル "
          f"{round(finger['bytes'] / 1048576, 1)}MB。数分かかる場合があります。")
     started = time.monotonic()
@@ -96,10 +100,19 @@ def run_startup_retraining(force=False):
 
 
 # ================= 転倒モデル =================
+def _fall_member_names():
+    """アンサンブルメンバーのファイル名(既定3)。1件目=正準名"""
+    names = list(getattr(settings, "AI_FALL_MODEL_FILES", None) or
+                 [training.FALL_MODEL_FILENAME])
+    n = max(1, int(getattr(settings, "AI_RETRAIN_FALL_ENSEMBLE", len(names))))
+    return names[:n]
+
+
 def _retrain_fall():
     import numpy as np
 
-    X, y, rows, skipped, groups = training.build_fall_dataset()
+    augment = bool(getattr(settings, "AI_RETRAIN_FALL_AUGMENT", True))
+    X, y, rows, skipped, groups = training.build_fall_dataset(augment=augment)
     if len(X) == 0:
         raise RuntimeError("train_data/*.csv からシーケンスを作れませんでした")
     np.save(training.dataset_path("X.npy"), X)
@@ -107,41 +120,55 @@ def _retrain_fall():
     np.save(training.dataset_path("groups.npy"), groups)
 
     threshold = _threshold()
-    model, metrics, (X_test, y_test, _prob) = training.train_fall(
-        X, y,
+    names = _fall_member_names()
+    # クラス重み+反転aug+複数シードのアンサンブル(2026-11-24)。
+    # 単一学習のシード分散で「同じデータなのに現行より1.2pt悪い」実測の対策。
+    models, metrics, (X_test, y_test, _prob) = training.train_fall_ensemble(
+        X, y, groups=groups,
+        n_models=len(names),
         epochs=int(getattr(settings, "AI_RETRAIN_EPOCHS_FALL", 50)),
         verbose=0,
-        groups=groups,
     )
-    candidate_path = training.candidate_dir() / training.FALL_MODEL_FILENAME
-    model.save(candidate_path)
-    candidate = training.evaluate_fall_at_threshold(model, X_test, y_test, threshold)
+    for name, m in zip(names, models):
+        m.save(training.candidate_dir() / name)
+    candidate = training.evaluate_fall_at_threshold(models, X_test, y_test, threshold)
 
     baseline = None
-    current = training.model_dir() / training.FALL_MODEL_FILENAME
-    if current.exists():
+    current_models = []
+    for name in names:
+        path = training.model_dir() / name
+        if path.exists():
+            current_models.append(training.load_model(path))
+    if current_models:
         try:
             baseline = training.evaluate_fall_at_threshold(
-                training.load_model(current), X_test, y_test, threshold)
+                current_models, X_test, y_test, threshold)
         except Exception as exc:  # noqa: BLE001
             _log(f"現行転倒モデルの評価に失敗(比較不能): {exc}")
 
     promoted = _should_promote(baseline, candidate)
+    backed_up = None
     if promoted:
-        dst, backed_up = training.promote(training.FALL_MODEL_FILENAME)
-        _log(f"転倒モデルを反映しました: {dst}")
+        dsts = []
+        for name in names:
+            if (training.candidate_dir() / name).exists():
+                dst, backed_up = training.promote(name)
+                dsts.append(str(dst))
+        _log("転倒モデル(アンサンブル%d名)を反映しました: %s" % (len(dsts), ", ".join(dsts)))
     else:
-        backed_up = None
         _log("転倒モデルは現行が同等以上のため反映を見送りました(候補は candidates/ に保持)")
 
     _log(f"  閾値{threshold:.2f} / 現行 acc={_pct(baseline, 'accuracy')} "
-         f"見逃し={_pct(baseline, 'miss_rate')} → 候補 acc={_pct(candidate, 'accuracy')} "
-         f"見逃し={_pct(candidate, 'miss_rate')}")
+         f"見逃し={_pct(baseline, 'miss_rate')} 誤検知={_pct(baseline, 'false_positive_rate')}"
+         f" → 候補 acc={_pct(candidate, 'accuracy')} "
+         f"見逃し={_pct(candidate, 'miss_rate')} 誤検知={_pct(candidate, 'false_positive_rate')}")
     return {
         "sequences": int(len(X)),
         "normal": int(np.sum(y == 0)),
         "fall": int(np.sum(y == 1)),
         "skipped": len(skipped),
+        "augmented": augment,
+        "ensemble": len(names),
         "threshold": threshold,
         "val_accuracy": metrics["val_accuracy"],
         "baseline": baseline,

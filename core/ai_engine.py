@@ -56,6 +56,17 @@ PERSON_COLORS = [
     (255, 255, 0),
 ]
 
+# --- トラッキング(旧 code\ai の assign_ids/track_match_score 移植 / 2026-11-24) ---
+# 旧ai2の「腰中心距離のみ」照合は、低fps/大きい移動でIDが切れて
+# 人物系列が壊れる(=LSTM/速度ルールの入力が汚れる)問題があった。
+# 旧aiの実績ある2段マッチング(IoU→中心距離で救済)へ全面置換する。
+IOU_MATCH_THRESHOLD = 0.20     # IoU がこれ以上なら「同じ人」(1.0+iou で優先)
+CENTER_MATCH_RATIO = 0.60      # IoU不足でも、中心距離が対角線×これ以内なら救済(スコア0台)
+TRACK_REVIVE_STALE = 5         # これ以上消えて復活したIDは「別人化」防止で系列を破棄
+# ふらつき(sway)表示の参考閾値(表示のみ。アラート化しない — 2026-11-24 決定)
+SWAY_LATERAL_WARN = 0.30       # 胴体長比の横揺れ範囲
+SWAY_TILT_WARN = 15.0          # 体幹傾きの変動幅(度)
+
 # 無動作とみなす1フレームあたりのランドマーク移動量(正規化座標の平均)
 # 0.004 ≒ 画面の0.4%。これ未満なら「動いていない」と判定する
 STILLNESS_MOVE_THRESHOLD = 0.004
@@ -144,17 +155,22 @@ def _load_shared():
 
         model_dir = _model_dir()
         pose_path = model_dir / "pose_landmarker_full.task"
-        # 転倒モデルは settings.AI_FALL_MODEL_FILENAME(grouped+normalized 版が既定)。
-        # ファイルが無い場合だけ旧名にフォールバックし、どちらも無ければ不足扱い。
-        fall_name = str(getattr(settings, "AI_FALL_MODEL_FILENAME", "fall_detection_lstm.keras"))
-        fall_path = model_dir / fall_name
-        if not fall_path.exists() and fall_name != "fall_detection_lstm.keras":
-            readiness.note("model", "転倒モデル %s が見つからないため旧モデルで起動します" % fall_name, "warn")
-            fall_path = model_dir / "fall_detection_lstm.keras"
+        # 転倒モデルは settings.AI_FALL_MODEL_FILES の**存在する分だけアンサンブル**
+        # (2026-11-24)。1件しかなければ従来どおりの単一モデル。
+        fall_names = list(getattr(settings, "AI_FALL_MODEL_FILES", None) or [
+            str(getattr(settings, "AI_FALL_MODEL_FILENAME", "fall_detection_lstm.keras"))])
+        fall_paths = [model_dir / name for name in fall_names if (model_dir / name).exists()]
+        if not fall_paths:
+            # 旧名のフォールバック(設定ミスで現行モデルを壊さない)
+            legacy = model_dir / "fall_detection_lstm.keras"
+            if legacy.exists():
+                fall_paths = [legacy]
         state_path = model_dir / "state_detection_lstm.keras"
         labels_path = model_dir / "state_labels.npy"
 
-        missing = [str(p) for p in (pose_path, fall_path, state_path, labels_path) if not p.exists()]
+        check_paths = [pose_path, state_path, labels_path,
+                       fall_paths[0] if fall_paths else model_dir / fall_names[0]]
+        missing = [str(p) for p in check_paths if not p.exists()]
         if missing:
             message = ("モデルファイルが不足しています: " + ", ".join(missing) +
                        "(caregiver_safety の models/ dataset/ からコピーしてください)")
@@ -177,16 +193,25 @@ def _load_shared():
             raise ModelLoadError(message) from exc
 
         readiness.model_step(55, "Kerasモデル(LSTM)を読み込み中…")
-        fall_model = load_model(str(fall_path))
+        fall_models = [load_model(str(p)) for p in fall_paths]
         state_model = load_model(str(state_path))
         state_labels = [str(label) for label in np.load(str(labels_path), allow_pickle=True)]
 
         readiness.model_step(78, "推論関数を tf.function にコンパイル中…")
+        fall_inferers = [_make_inferencer(m) for m in fall_models]
+
+        def _fall_infer(inputs):
+            """転倒確率 = 現存メンバーの平均(1件のときは従来動作と同一)"""
+            if len(fall_inferers) == 1:
+                return fall_inferers[0](inputs)
+            return np.mean([f(inputs) for f in fall_inferers], axis=0)
+
         _shared = {
             "np": np,
             "pose_path": str(pose_path),
             "connections": vision.PoseLandmarksConnections.POSE_LANDMARKS,
-            "fall_infer": _make_inferencer(fall_model),
+            "fall_infer": _fall_infer,
+            "fall_members": len(fall_inferers),
             "state_infer": _make_inferencer(state_model),
             "state_labels": state_labels,
             # Kerasモデルは複数スレッドから同時に呼ばない(推論は約7msなので直列化しても速い)
@@ -194,7 +219,10 @@ def _load_shared():
         }
         seconds = round(time.monotonic() - began, 1)
         readiness.model_ready(seconds)
-        readiness.note("model", "AIモデルの準備が完了しました(%.1f秒)" % seconds, "ok")
+        readiness.note("model", "AIモデルの準備が完了しました(%.1f秒 / 転倒=%d名)" % (
+            seconds, len(fall_inferers)), "ok")
+        if bool(getattr(settings, "AI_CLIP_VERIFY", True)) and not _clip_state["loaded"]:
+            _clip_warmup_async()
         return _shared
 
 
@@ -365,6 +393,68 @@ def _foot_visible(landmarks):
     return visible >= 4
 
 
+def _iou(box1, box2):
+    """旧ai compute_iou の移植(ピクセルbboxタプル)"""
+    x1 = max(box1[0], box2[0])
+    y1 = max(box1[1], box2[1])
+    x2 = min(box1[2], box2[2])
+    y2 = min(box1[3], box2[3])
+    inter = max(0, x2 - x1) * max(0, y2 - y1)
+    area1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
+    area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
+    union = area1 + area2 - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _track_match_score(det_box, track_box):
+    """旧ai track_match_score: 1.0超=IoU一致 / 0〜1=中心距離救済 / 0=不一致"""
+    if det_box is None or track_box is None:
+        return 0.0
+    iou = _iou(det_box, track_box)
+    if iou >= IOU_MATCH_THRESHOLD:
+        return 1.0 + iou
+    cx1, cy1 = (det_box[0] + det_box[2]) / 2.0, (det_box[1] + det_box[3]) / 2.0
+    cx2, cy2 = (track_box[0] + track_box[2]) / 2.0, (track_box[1] + track_box[3]) / 2.0
+    dist = ((cx1 - cx2) ** 2 + (cy1 - cy2) ** 2) ** 0.5
+    diag1 = ((det_box[2] - det_box[0]) ** 2 + (det_box[3] - det_box[1]) ** 2) ** 0.5
+    diag2 = ((track_box[2] - track_box[0]) ** 2 + (track_box[3] - track_box[1]) ** 2) ** 0.5
+    limit = CENTER_MATCH_RATIO * max(diag1, diag2)
+    if limit > 0 and dist <= limit:
+        return 1.0 - 0.5 * (dist / limit)
+    return 0.0
+
+
+def _sway_update(track, landmarks):
+    """旧ai update_pose_track の移植: 胴体中心の横揺れ範囲と傾き変動幅
+
+    戻り値 (sway_lateral[胴体長比], sway_tilt[度])。visibility不足フレームは
+    履歴へ積まない(欠けた検出で指標を汚さない — 旧aiと同じ判断)。
+    """
+    ls, rs = landmarks[11], landmarks[12]
+    lh, rh = landmarks[23], landmarks[24]
+    if all(getattr(lm, "visibility", 1.0) > 0.3 for lm in (ls, rs, lh, rh)):
+        shoulder_cx = (ls.x + rs.x) / 2.0
+        shoulder_cy = (ls.y + rs.y) / 2.0
+        hip_cx = (lh.x + rh.x) / 2.0
+        hip_cy = (lh.y + rh.y) / 2.0
+        torso_x = (shoulder_cx + hip_cx) / 2.0
+        torso_len = math.hypot(hip_cx - shoulder_cx, hip_cy - shoulder_cy)
+        if torso_len < 0.01:
+            torso_len = 0.1
+        tilt = math.degrees(math.atan2(abs(shoulder_cx - hip_cx),
+                                       max(1e-6, abs(shoulder_cy - hip_cy))))
+        track["sway_hist"].append((torso_x, tilt, torso_len))
+    hist = track["sway_hist"]
+    if len(hist) < 5:
+        return track["sway_lateral"], track["sway_tilt"]
+    xs = [h[0] for h in hist]
+    tilts = [h[1] for h in hist]
+    avg_tlen = sum(h[2] for h in hist) / len(hist)
+    track["sway_lateral"] = (max(xs) - min(xs)) / max(avg_tlen, 0.01)
+    track["sway_tilt"] = max(tilts) - min(tilts)
+    return track["sway_lateral"], track["sway_tilt"]
+
+
 def _torso_tilt(landmarks):
     """体幹の傾き(度): 0=直立, 90=水平。肩中心〜腰中心のベクトルから算出
 
@@ -412,6 +502,94 @@ def _velocity_fall_check(tilt_hist, roll_thr, window, horiz_thr, stay_deg, stay_
     return True, "roll=%.0f°/%dF→%.0f°" % (best_roll, window, arr[ev])
 
 
+# ================= CLIP アラート検証官(旧 code\ai 転用 / 2026-11-24) =================
+# 旧aiはCLIPを主検知に使って「微妙」だった。使い方を**アラート瞬間だけの
+# ゼロショット検証**に変えると効く: 学習不要で「床に倒れている人」の意味を確認し、
+# しゃがみ/前かがみ誤検知を拒否できる。
+# 設計方針: **フェイルオープンの拒否権のみ** — CLIPが居ない/壊れたときは
+# 従来どおりアラートを通す(検知を止めない)。肯定で信頼度を上げることはしない。
+_clip_state = {"loaded": False, "failed": False, "model": None, "processor": None}
+# RLock: _clip_verify_lying が非ブロック取得後に _ensure_clip へ入る(同一スレッド再入)
+_clip_lock = threading.RLock()
+
+CLIP_PROMPTS = (
+    "a photo of a person lying on the floor",
+    "a photo of a person standing or sitting upright",
+)
+
+
+def _ensure_clip():
+    """CLIPモデルを1回だけ読む込こむ(多重呼び出しは lock で直列化)"""
+    if _clip_state["loaded"] or _clip_state["failed"]:
+        return _clip_state["loaded"]
+    with _clip_lock:
+        if _clip_state["loaded"] or _clip_state["failed"]:
+            return _clip_state["loaded"]
+        try:
+            from transformers import CLIPModel, CLIPProcessor
+            name = str(getattr(settings, "AI_CLIP_MODEL", "openai/clip-vit-base-patch32"))
+            began = time.monotonic()
+            _clip_state["model"] = CLIPModel.from_pretrained(name)
+            _clip_state["processor"] = CLIPProcessor.from_pretrained(name)
+            _clip_state["loaded"] = True
+            print("[RealtimeAI] CLIP検証官 準備完了: %s (%.1f秒)" % (name, time.monotonic() - began))
+        except Exception as exc:  # noqa: BLE001 -検証官の失敗で検知を止めない
+            _clip_state["failed"] = True
+            print("[RealtimeAI] CLIP検証官を利用不可として扱います(アラートは従来どおり): "
+                  "%s: %s" % (type(exc).__name__, exc))
+    return _clip_state["loaded"]
+
+
+def _clip_warmup_async():
+    """起動時に裏スレッドでCLIPを読む込み込み。
+
+    必要な理由: transformers/torch の初回 import とモデル読込(~600MB)は 10〜30秒。
+    これを「最初のアラート瞬間」に解析ループ内でやると、そのカメラが数十秒止まる
+    (スレッド内初回importは20秒級、という実測教訓と同じ罠)。裏で済ませる。
+    途中でもアラートが来たら _clip_verify_lying 側は**待たずに素通し**する
+    (検証官の準備中を検知遅延にしない=フェイルオープン原則)。
+    """
+    threading.Thread(target=_ensure_clip, daemon=True, name="clip-warmup").start()
+
+
+def _clip_verify_lying(frame, cv2, bbox):
+    """True=寝倒れ確認 / False=拒否 / None=素通し(準備中・CLIP不在・故障)"""
+    if _clip_state["failed"]:
+        return None
+    if not _clip_state["loaded"]:
+        # 起動時のwarmupが終わっていないだけ。ここで待たない(検知を止めない)
+        if not _clip_lock.acquire(blocking=False):
+            return None
+        try:
+            if not _ensure_clip():
+                return None
+        finally:
+            _clip_lock.release()
+    try:
+        import torch
+        from PIL import Image
+
+        x1, y1, x2, y2 = bbox
+        h, w = frame.shape[:2]
+        mx = int((x2 - x1) * 0.15)
+        my = int((y2 - y1) * 0.15)
+        crop = frame[max(0, y1 - my):min(h, y2 + my), max(0, x1 - mx):min(w, x2 + mx)]
+        if crop.size == 0:
+            return None
+        pil = Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
+        inputs = _clip_state["processor"](text=list(CLIP_PROMPTS), images=pil,
+                                          return_tensors="pt", padding=True)
+        with torch.no_grad():
+            out = _clip_state["model"](**inputs)
+            probs = torch.softmax(out.logits_per_image[0], dim=-1).tolist()
+        return bool(float(probs[0]) >= float(getattr(settings, "AI_CLIP_MIN_LYING", 0.5)))
+    except Exception as exc:  # noqa: BLE001 -検証官の失敗で検知を止めない
+        _clip_state["failed"] = True
+        print("[RealtimeAI] CLIP検証官を利用不可として扱います(アラートは従来どおり): "
+              "%s: %s" % (type(exc).__name__, exc))
+        return None
+
+
 def _new_track(uid, center):
     """1人物分の追跡状態(ai2.0 の create_track 相当)
 
@@ -423,12 +601,19 @@ def _new_track(uid, center):
         "id": uid,
         "display_id": uid,
         "center": center,
+        "box": None,
+        "lost": 0,
         "sequence": deque(maxlen=SEQUENCE_LENGTH),
         "state_sequence": deque(maxlen=SEQUENCE_LENGTH),
         "tilt_hist": deque(maxlen=SEQUENCE_LENGTH),
         "velocity_fall": False,
         "velocity_why": "",
         "velocity_up_count": 0,
+        "sway_hist": deque(maxlen=30),
+        "sway_lateral": 0.0,
+        "sway_tilt": 0.0,
+        "clip_last_at": 0.0,
+        "clip_rejects": 0,
         "status": "WAITING",
         "state_label": "判定中",
         "danger_percent": None,
@@ -481,6 +666,8 @@ class _CameraRuntime:
             "sequence_frames": 0,
             "people": 0,
             "people_detail": [],
+            "sway_lateral": 0.0,
+            "sway_tilt": 0.0,
             "fps": 0.0,
             "person_present": False,
             "ai_throttled": False,
@@ -673,7 +860,7 @@ class _CameraRuntime:
         # --- ai2.0 統合パラメータ ---
         confirm_count = max(1, int(getattr(settings, "AI_FALL_CONFIRM_COUNT", FALL_CONFIRM_COUNT)))
         infer_interval = max(1, int(getattr(settings, "AI_INFERENCE_INTERVAL", 5)))
-        track_distance = float(getattr(settings, "AI_TRACK_DISTANCE_THRESHOLD", 0.18))
+        # (旧)track_distance は 2026-11-24 の IoUトラッカー移植により未使用化
         track_max_missing = max(1, int(getattr(settings, "AI_TRACK_MAX_MISSING", 15)))
         normalize_fall = bool(getattr(settings, "AI_NORMALIZE_FALL_INPUT", True))
         process_w = max(64, int(getattr(settings, "AI_POSE_PROCESS_WIDTH", 320)))
@@ -689,6 +876,10 @@ class _CameraRuntime:
         v_stay_frames = max(2, int(getattr(settings, "AI_VELOCITY_STAY_FRAMES", 15)))
         v_confidence = min(0.99, max(0.0, float(getattr(settings, "AI_VELOCITY_CONFIDENCE", 0.90))))
         v_release_frames = max(2, int(getattr(settings, "AI_VELOCITY_RELEASE_FRAMES", 10)))
+
+        # CLIP検証官(旧ai転用 / 2026-11-24)
+        clip_verify = bool(getattr(settings, "AI_CLIP_VERIFY", True))
+        clip_interval = max(2.0, float(getattr(settings, "AI_CLIP_CHECK_SECONDS", 10)))
 
         # 統計
         window_start = started
@@ -836,36 +1027,53 @@ class _CameraRuntime:
             for track in tracks.values():
                 track["missing"] += 1
 
-            matched_ids = set()
+            # --- 旧ai assign_ids 移植: IoU+中心距離の2段マッチング(高スコア順貪欲) ---
+            track_list = list(tracks.values())
+            pairs = []
+            for di, det in enumerate(detections):
+                for ti, cand in enumerate(track_list):
+                    score = _track_match_score(det["bbox"], cand["box"])
+                    if score > 0.0:
+                        pairs.append((score, di, ti))
+            pairs.sort(key=lambda pair: pair[0], reverse=True)
+
+            assigned = {}
+            matched_ti = set()
+            for _score, di, ti in pairs:
+                if di in assigned or ti in matched_ti:
+                    continue
+                assigned[di] = track_list[ti]
+                matched_ti.add(ti)
+
             visible_tracks = []
             for display_index, detection in enumerate(detections, start=1):
                 cx, cy = detection["center"]
-
-                # 腰中心が最も近い未マッチトラック = 同じ人(ai2.0のグリーディ照合)
-                best_track = None
-                best_distance = track_distance
-                for track in tracks.values():
-                    if track["id"] in matched_ids:
-                        continue
-                    dx, dy = cx - track["center"][0], cy - track["center"][1]
-                    distance = (dx * dx + dy * dy) ** 0.5
-                    if distance < best_distance:
-                        best_distance = distance
-                        best_track = track
-
-                if best_track is not None:
-                    track = best_track
-                else:
+                track = assigned.get(display_index - 1)
+                if track is None:
                     track = _new_track(next_track_uid, (cx, cy))
                     tracks[next_track_uid] = track
                     next_track_uid += 1
-                matched_ids.add(track["id"])
+                elif track["missing"] >= TRACK_REVIVE_STALE:
+                    # 長期間消えて復活したトラック = 別人/テレポートの恐れ。
+                    # 系列を捨ててやり直す(旧aiの「キャッシュ破棄で判定し直し」相当。
+                    # 壊れた系列がLSTM/速度ルールに混入するのを防ぐ)
+                    track["sequence"].clear()
+                    track["state_sequence"].clear()
+                    track["tilt_hist"].clear()
+                    track["sway_hist"].clear()
+                    track["prev_points"] = None
+                    track["fall_count"] = 0
+                    track["velocity_fall"] = False
+                    track["velocity_up_count"] = 0
+                    track["still_since"] = None
+                    track["smooth"] = None
+                track["missing"] = 0
 
                 landmarks = detection["landmarks"]
                 track["display_id"] = display_index
                 track["center"] = (cx, cy)
                 track["bbox"] = detection["bbox"]
-                track["missing"] = 0
+                track["box"] = detection["bbox"]
 
                 # 33ランドマーク × x,y,z = 99値
                 pose_data = []
@@ -896,6 +1104,9 @@ class _CameraRuntime:
                 track["still_seconds"] = int(now - track["still_since"])
 
                 track["foot_visible"] = _foot_visible(landmarks)
+
+                # ふらつき計測(旧ai update_pose_track 移植。表示専用の指標)
+                _sway_update(track, landmarks)
 
                 # 速度ルール: 体幹傾きの履歴を積んで毎フレーム評価(引き算だけのコスト)
                 # 一度発火したら「倒れたまま」の間はラッチする。
@@ -1021,6 +1232,8 @@ class _CameraRuntime:
                         "danger": round(t["danger_percent"], 1)
                         if t["danger_percent"] is not None else None,
                         "velocity_fall": bool(t["velocity_fall"]),
+                        "sway_lateral": round(t["sway_lateral"], 2),
+                        "sway_tilt": round(t["sway_tilt"], 1),
                     }
                     for t in visible_tracks
                 ]
@@ -1041,6 +1254,22 @@ class _CameraRuntime:
             # 転倒: **人物ごとに1件**(ラッチも人物単位。2人目の転倒は黙らない)
             for track in visible_tracks:
                 if track["status"] == "FALL !!!" and not track["fall_latched"]:
+                    # CLIP検証官(旧ai転用): アラート瞬間だけゼロショットで
+                    # 「床に倒れている」か確認し、否定したら今回のアラートを拒否。
+                    # 人物あたり clip_interval 秒に1回まで(検証1回=CPUで100〜300ms)。
+                    # None=CLIP不在=素通し(フェイルオープン。検知を止めない)
+                    if clip_verify and track["bbox"] is not None:
+                        if now - track["clip_last_at"] >= clip_interval:
+                            track["clip_last_at"] = now
+                            verdict = _clip_verify_lying(frame, cv2, track["bbox"])
+                        else:
+                            verdict = False if track["clip_rejects"] else None
+                        if verdict is False:
+                            track["clip_rejects"] += 1
+                            print(f"[RealtimeAI:{device}] CLIPが転倒を拒否"
+                                  f"(しゃがみ/前かがみの可能性): Person {track['display_id']}"
+                                  f" 累計{track['clip_rejects']}回")
+                            continue
                     # 信頼度は ai2 の規約どおり 0.0〜1.0 で保存する
                     alert_info = _raise_alert(
                         device, Alert.Kind.FALL, (track["danger_percent"] or 0.0) / 100.0,
@@ -1154,6 +1383,9 @@ class _CameraRuntime:
                 # 複数人物検知(ai2.0): 人数と人物ごとの内訳
                 "people": people,
                 "people_detail": people_detail,
+                # ふらつき(表示専用): 最も揺れている人物の値
+                "sway_lateral": round(max([t["sway_lateral"] for t in visible_tracks], default=0.0), 2),
+                "sway_tilt": round(max([t["sway_tilt"] for t in visible_tracks], default=0.0), 1),
                 "fps": current_fps,
                 # AI間引きの状況: 無人が続いているカメラは POSE を 1/probe 秒間隔に落とす
                 "person_present": person_present,
@@ -1514,6 +1746,8 @@ class RealtimeAIEngine:
                     "pose_fps": runtime.status.get("pose_fps"),
                     # 複数人物検知(ai2.0)
                     "people": runtime.status.get("people", 0),
+                    "sway_lateral": runtime.status.get("sway_lateral", 0.0),
+                    "sway_tilt": runtime.status.get("sway_tilt", 0.0),
                     "persistent": runtime.persistent,
                     # 常時稼働ぶんの自己視聴は除いて表示する
                     "viewers": max(0, runtime.viewers - (1 if runtime.persistent else 0)),
@@ -1558,13 +1792,13 @@ class RealtimeAIEngine:
 
         # 2) ローカル(USB)カメラ
         if explicit is not None:
-            candidates = sorted((int(index) for index in explicit), reverse=True)
+            candidates = sorted(int(index) for index in explicit)
         else:
             result = camera_service.detect_devices()
             found = [
                 int(device["index"])
                 for device in result.get("devices", [])
-                if device.get("available", True)
+                if device.get("available", True) or device.get("busy")
             ]
             if not found:
                 # 検知中(pending)や結果なしのときに 0..N の総当たりへ転けない。
@@ -1572,9 +1806,18 @@ class RealtimeAIEngine:
                 # 「index 7: 開けませんでした」連発はここが毎回総当たりだったため)
                 found = [int(index) for index in camera_service.known_indices()]
             if not found:
-                # 本当に初めて(まだ何も見つけていない)ときだけ範囲探索する
-                found = list(range(int(getattr(settings, "DEBUG_CAMERA_MAX_DEVICES", 4))))
-            candidates = sorted(found, reverse=True)
+                # まだ何も見つかっていない(起動直後の初回サイクルだけ):
+                # **エンジンスレッドで 0..N を直接開きには行かない**。検知スレッドを
+                # 走らせて次の30秒サイクルに譲る。ここで総当たりすると検知プローブと
+                # 同一indexを二重openし、両方がハングして永久にblindになる(2026-11-24実測)。
+                camera_service.detect_devices()
+                return ip_keys
+            # 開く順序は **index 昇順**(2026-11-24 変更)。
+        # 実測: このPCはUSBカメラ2台同時ストリームで「後発が飢える」ため
+        # (第44章)、降順だと内蔵(index0)が常に後発になって開けない/0fpsの
+        # ping-pongが起きた。昇順=内蔵が先、外付け(C270等)が後。
+        # 帯域が足りる環境では順序の実利はないので、安全側で昇順に固定する。
+        candidates = sorted(found)
 
         if priority:
             ordered = [int(index) for index in priority]

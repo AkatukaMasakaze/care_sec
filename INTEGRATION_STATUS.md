@@ -2305,3 +2305,159 @@ app.js の agoLabel 直後に clockTick(1秒間隔)を復旧。pad2/formatClock 
 ※静的JSなので手元ブラウザは Ctrl+F5 で新 app.js を取得すること(サーバーを
   再起動すれば ?v= が変わって自然に反映される)。
 
+
+
+---
+
+## 48. 2026-11-20 NTU RGB+D 蒸留の実験(ai2_bakで実施)と判定
+
+### 実施内容(隔離環境 ai2_bak、本番 ai2 は無変更)
+1. `ai2` → `ai2_bak` コピー(.venv/__pycache__/media/train_dataset 除外、295ファイル/293MB)
+2. 教師系構築: `ai2_bak/ntu_work/` に
+   - `.venv_teacher`(torch 2.15 CPU + gdown)
+   - **CTR-GCN 公式リポジトリ**(Uason-Chen/ICCV2021)+ **公式チェックポイント
+     Google Drive から実ダウンロード成功**:
+     NTU60 Xsub joint 89.9% / bone 90.6% / motion 88.1%、NTU120 CSub joint 84.9% / bone 85.7%
+   - スモーク: state_dict 完全ロード(missing=0)、出力 (N,60) ✓
+3. 変換器 `mp2ntu.py`: MediaPipe33→NTU25関節対応表+NTUの denoise_scale 再現+
+   T=64/300 リサンプル。教師スコアリング `score_teacher.py`(39CSV×4モデル)
+4. 本番用 venv: `ai2_bak/.venv` を requirements-windows.txt から構築(+torch予定)
+
+### 判定: **教師として実用不可(ドメインギャップ)** — 証拠3点
+1. **MediaPipe変換クリップ** → 教師出力が全クリップほぼ一様/上位3は
+   {A43,A59,A10} の固定prior(=識別できていない)。変数グリッド(6種)を総当たりしても改善せず
+2. **NTU規約で合成した歩く/転ぶ/座る** → 出力は「自信あり」(0.67/0.80)だがクラスは
+   歩く→A10(clapping)、座る→A10。**モデルは健全だがNTUの運動規約に極めて敏感**
+   (=チェックポイントのせいでなく、座標・運動の再現精度の問題と確定)
+3. NTU本体は実測3D(m)・Kinect座標・25関節の固有kinematics。MediaPipeの
+   正規化2D+疑似zからの再現には**NTU実データでの較正(=EULA登録+数十GBDL)が必要**で、
+   「撮影コストを下げる」という動機と矛盾する
+
+### 決定(蒸留は中断、資産は保持)
+- `ntu_work/` の一式(CTR-GCN/チェックポイント/変換器/較正スクリプト)は**残置**。
+  将来 NTU 実データへアクセスできる場合(研究室等)に再挑戦可能
+- 精度改善の本命は**データ転移路線**に切り替え:
+  公開転倒データセット(SMD/UR-Fall等)の**動画**へ、実行時と同じ MediaPipe を通して
+  train_data CSV を生成 → ドメインギャップゼロ、既存の自動再学習がそのまま食える
+- GUI収集路線は既に稼働中(本番で 11/19 に candidates 生成=ユーザー収集データで自動再学習実行済み)
+
+### 副産物
+- ai2_bak の完全自己完結 venv(requirements-windows.txt ベース)→ バックアップが
+  そのまま `manage.py test`/学習/検証を実行できる状態になる
+- 蒸留パイプラインの骨格(変換→soft label→混合損失)はコードとして残っており、
+  教師が使えるようになった日そのまま流用できる
+
+
+
+---
+
+## 49. 2026-11-24 旧ai転用+転倒モデル再構築(アンサンブル)のai2実装
+
+### 依頼
+ai2_bakでの実験(第48章)の続きとして、
+① 転倒モデルも既存学習データで精度向上 ② 旧 code\ai から精度に効くものをai2へ実装。
+質問への回答: クラス重み+反転aug+3シードアンサンブル / CLIPは本番venv直接 /
+swayは表示のみ / トラッキングは旧ai方式へ全面置換。
+
+### 実装1: 転倒モデルの再構築(本番反映済み)
+- `training.py`: `flip_landmarks`(左右対称関節の入れ替え+x反転+z反転。転倒は
+  左右対称なのでラベル不変で窓数ほぼ2倍)、`train_fall` に **class_weight**
+  (fall 388/normal 1,860 の不均衡を是正。見逃し12%の主因)と `init_seed`、
+  `train_fall_ensemble`(分割は seed 固定・初期化だけずらす3名)、
+  `evaluate_fall_at_threshold` がモデルリスト対応
+- `ai_engine.py`: `AI_FALL_MODEL_FILES` の**現存分だけ平均**する `_fall_infer`
+  (1件なら従来動作と完全互換)。無いメンバーは自動スキップ
+- `retraining.py`: `_retrain_fall` が aug+3名アンサンブル+同一テスト集合で
+  baseline(現行=複数ファイル可) vs candidate を比較し、勝者のみ promote
+  (全メンバーの旧版は backup/ へ)。`ensure_dirs()` 追加
+  (ai2_bakで出た FileNotFoundError の再発防止)
+- **ai2_bakで訓練→同一条件比較→圧勝のため本番promote**:
+  | モデル | acc | 誤検知(窓) | 見逃し(窓) |
+  |---|---|---|---|
+  | 現行単一 | 0.6199 | 38.8% | 34.8% |
+  | 候補3名aug+重み | **0.8608** | 16.1% | **4.3%** |
+  - 閾値スウィープ(候補): 0.5→見逃し4.3/誤16.1、0.6→8.2/11.9、0.7→13.0/5.2、0.8→18.5/1.8
+  - 運用閾値は **0.5 維持**(介護では見逃しが最悪。窓レベル誤検知は
+    連続8票+CLIP拒否でアラートレベルに絞られる設計)
+  - 旧単一モデルは `ai_models/backup/manual-20261124-100228/` に退避済み。
+    現行 = `fall_detection_lstm.keras` + `_e2` + `_e3`(3名平均)
+
+### 実装2: 旧ai転用
+- **トラッキング全面置換**(`_iou`/`_track_match_score`/高スコア貪欲の `assigned` 照合、
+  定数 IOU_MATCH_THRESHOLD=0.20 / CENTER_MATCH_RATIO=0.60 / TRACK_REVIVE_STALE=5):
+  消失→復活したトラックは**系列を丸ごと破棄**(別人/テレポートの混入防止。
+  旧aiの「キャッシュ破棄で判定し直し」相当)
+- **ふらつき(sway)表示のみ**(`_sway_update` 移植: 横揺れ幅[胴体長比]/傾き変動幅[度]):
+  デバッグカード「ふらつき」欄+全カメラ表「ふらつき」列。15°/0.30超で橙。
+  **アラート化しない**(2026-11-24決定)
+- **CLIPアラート検証官**(`_clip_verify_lying`、本番venvに torch2.15cpu+transformers
+  +clip-vit-base-patch32 導入済み・DLキャッシュ済み):
+  FALL !!! 確定瞬間に人物クロップで "lying on the floor" vs "standing/sitting upright"
+  をゼロショット判定し、**否定したらアラートを拒否**(しゃがみ/前かがみ誤検知対策)。
+  人物あたり10秒に1回まで。CLIP不在/失敗時は**素通し(フェイルオープン)**で検知を止めない。
+  設定: AI_CLIP_VERIFY / AI_CLIP_MODEL / AI_CLIP_MIN_LYING=0.5 / AI_CLIP_CHECK_SECONDS
+
+### 検証(全緑)
+- `verify_multi_person.py` **12/12**(新ケース: CLIP拒否時はFALL確定でもアラート0件、
+  実ログ「CLIPが転倒を拒否…累計12回」確認。既存ケースは検証官スタブ化で両立)
+- `verify_empty_throttle.py` 5/5 / `manage.py test core` 23/23 / check OK
+- 本番スモーク: `_load_shared` members=3 / CLIP実動(黒画像→False=正しく拒否) /
+  実カメラ全ループ 27.1fps・間引き4.8/s・エラー0
+- 発見修正: `_load_shared` の missing チェックで str/Path 混在バグ(実機スモークで検出)
+
+### 反映条件
+**サーバー起動時に新3名モデル+検証官が読み込まれる**(今サーバーは落きているので
+次回起動から有効)。ai2_bak 側はコード同期済みで同一実験が可能。
+
+
+### 49-補足(2026-11-24 実機起動チェックで判明した2件 / ai2へ直接適用)
+1. **カメラが開かない(=AIが乗らないように見えていた)**: 起動順序が降順
+   (index7→0)だと内蔵カメラindex0が常に後発になり、USB帯域競争で飢えて
+   「index 1のみ稼働 / index 0 開けず」が再現した。target_devices の開く順序を
+   **昇順**(AI_ALWAYS_DEVICES指定時も昇順)に変更 → 実測で index0=27.3fps /
+   index1=28.6fps / 無人間引き4.9/s / モデル15.1秒(転倒=3名)で両カメラ同時稼働。
+2. **CLIP検証官の初回ストール対策**: 従来は最初のアラート瞬間に解析スレッド内で
+   torch/transformers を初import+(600MB)モデル読込していて、そのカメラが数十秒
+   止まるリスクがあった(スレッド内初回importは20秒級の実測教訓)。
+   `_ensure_clip`/`_clip_warmup_async` を新設し、**サーバー起動裏で読込**。
+   読込中のアラートは待たず素通し(フェイルオープン原則)。ロックは再入安全な
+   RLock(_clip_verify_lying が非ブロック取得後に _ensure_clip へ入るため)。
+   verify_multi_person.py は検証プロセスで実CLIPを読まないよう _clip_state を確定。
+
+### 49-補足2(2026-11-24 午後): サーバー突然死(0xc0000374)の真犯人=カメラopen衝突ループ
+
+**症状**: 起動11〜21秒でネイティブクラッシュ(ヒープ破損/AV/fastfail。Pythonトレースバックなし)。
+ユーザー環境10:44、私の起動11:07/11:13/11:47と計4回。PC再起動でも再発→スタック中毒ではない。
+
+**調査で無罪**: モデルロード(15秒で3名正常) / torch×TF×カメラ同プロセス(CLIP推論60回=MODE7無事) /
+cv2単体のopen競合(MODE1-5無事)。**単体では何もクラッシュしない**のにサーバーだけ死ぬ。
+
+**犯人**: `target_devices` の「何も見つけていないときだけ range(0..MAX) 総当たり」フォールバックと
+検知スレッド(`_run_detection`→`_probe`)が**同一indexを二重open**する。
+DSHOW形式交渉はUSB总线で直列+ハングするため(実測 index1 MSMF=96秒ハング)、
+・プローブが busy → devices=[] → known 更新されず → 次の30秒サイクルもまた総当たり → 積む
+という自己継続ループにはまり、(a) ハングスレッド乱立のまま全カメラblind、(b) ネイティブ層の
+二重open/解放競合で heap corruption クラッシュ、の両方を発生させていた。
+11/17・11/18 の同種クラッシュ履歴(イベントログ)もこのコードの时代と一致。
+
+**修正(ai2本番、ai2_bak同期済)**:
+1. `ai_engine.target_devices`: 総当たりフォールバックを**廃止**。検知未了のサイクルは
+   `detect_devices()` をキックして [] を返し、次の30秒サイクルに譲る(検知のみがopenする)
+2. `camera_service._run_detection`: known_indices 更新に **busy を含む**(空振りindexが
+   known から消えて総当たり戻しするのを防止)
+3. `ai2_supervise.ps1` の解放確認プローブは CAP_DSHOW(0.5秒)に修正(MSMFは96秒ハング)
+
+**監視ツール(本番ai2直下)**:
+- `ai2_supervise.ps1` … runserver常駐+自動再起動。supervise.log に exit code/生存秒数。
+  180秒未满の即死3連続でABORT(無限ループ停止)。ログは ai2_srv\run*.log(直近100周)
+- `ai2_watchdog_poll.py` … サーバーとは別プロセスで15秒ごとにエンジン状態を
+  ai2_watchdog.log へ。セッション切れ自動再ログイン。クラッシュ時は最後の行が死亡直前の証言
+- `ai2_crash_probe.py` … ネイティブクラッシュ再現テスト(MODE 1-8)
+
+**修正後の実測(12:00)**: 検知が9秒で [0,1] を発見 → dev0 28.2fps / dev1 15.6fps 両台稼働、
+人物検出・間引き正常、**クラッシュなし**。単発プローブで index1 が MSMF でハングする間は
+エンジン(DSHOW優先)は無事 = バックエンド非対称の運用は camera_service の順序が吸収している。
+
+**残課題**: C270 の MSMF ハングはOS/ドライバ側(index1のみ)。検知プローブは budget 6秒で
+打ち切る設計どおり。暫定的な被害なし。万一の再発時は supervise.log の code と
+ai2_watchdog.log 末尾を参照。

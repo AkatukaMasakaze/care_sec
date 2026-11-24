@@ -171,6 +171,11 @@ def run_two_people(seconds=6.0):
 
 def main():
     print("=== ai2.0統合エンジン検証 ===")
+    # 実カメラ不要の検証なので CLIP検証官はスタブで確定させる
+    # (本物のCLIPは全面黒画像のフェイクフレームを「寝倒れではない」と拒否するため)。
+    # 検証官自体の挙動はケース7で明示的にテストする。
+    ai_engine._clip_verify_lying = lambda frame, cv2, bbox: True
+    ai_engine._clip_state["loaded"] = True  # 検証プロセスで実CLIP(600MB)を裏読込みさせない
     # 実運用では _get_landmarker がメインスレッドで mediapipe/TensorFlow を読み込んでから
     # 解析スレッドを立てる。検証でも同じ順にしておく(スレッド内初回importは20秒級で、
     # 計測時間がそれに食われて「動いていない」ように見える: 実測)
@@ -294,6 +299,41 @@ def main():
     check("危険度がルール信頼度(90%)で表示",
           s3.get("danger_percent") is not None and s3.get("danger_percent") >= 89.0,
           "danger=%s" % s3.get("danger_percent"))
+
+    # 7) CLIP検証官の拒否権: 検証官が否定したらアラートを出さない(減点もラッチもしない)
+    ai_engine._clip_verify_lying = lambda frame, cv2, bbox: False
+    fake4 = FallingLandmarker(fall_at=0.5, settle=65.0)
+    rt4 = ai_engine._CameraRuntime("verifyClip")
+    captured4 = []
+
+    def fake_alert4(device, kind, confidence, person_state, ai, frame=None, person_id=None):
+        captured4.append({"kind": str(kind), "person_id": person_id})
+        return None
+
+    shared4 = dict(shared_for_reentry)
+    # read_frame/save_snapshot はケース6後に取り消されているので再パッチ(実カメラは掴まない)
+    frame4 = np.zeros((480, 640, 3), dtype=np.uint8)
+    orig_read4 = ai_engine.camera_service.read_frame
+    orig_save4 = ai_engine.camera_service.save_snapshot
+    ai_engine.camera_service.read_frame = lambda dev: frame4
+    ai_engine.camera_service.save_snapshot = lambda dev, f: None
+    th4 = threading.Thread(target=rt4._loop, args=(rt4.stop, shared4, fake4), daemon=True)
+    orig_alert4 = ai_engine._raise_alert
+    ai_engine._raise_alert = fake_alert4
+    th4.start()
+    time.sleep(5.0)
+    with rt4.lock:
+        s4 = dict(rt4.status)
+    rt4.stop.set()
+    th4.join(6)
+    ai_engine._raise_alert = orig_alert4
+    ai_engine.camera_service.read_frame = orig_read4
+    ai_engine.camera_service.save_snapshot = orig_save4
+    ai_engine._clip_verify_lying = lambda frame, cv2, bbox: True
+
+    check("CLIP拒否時はFALL確定でもアラートを出さない",
+          s4.get("status") == "FALL !!!" and not captured4,
+          "status=%s alerts=%s" % (s4.get("status"), captured4))
 
     print()
     print("結果: %d/%d 通過" % (len(PASS), len(PASS) + len(FAIL)))

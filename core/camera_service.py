@@ -710,11 +710,16 @@ def _run_detection(cv2):
 
     # 既知indexを更新(ここから quick path が効くようになる)。
     # available=False のだけのindexは既知に含めない(開けないindexの総当たり戻し)。
+    # ただし busy(=プローブがハング/タイムアウト、OS上は存在)は既知に含める:
+    # 2026-11-24 実測で、エンジン側の総当たりと検知プローブが同一indexで衝突すると
+    # 両方 timeout→busy 扱い→既知から除外→エンジンがまた総当たり…の自己継続ループに
+    # はまり、**全カメラblind**(serverは動いているが検知ゼロ)になった。
+    # busy の index は engine 側で patience 付き acquire(実績あり)に回すのが正。
     global _known_indices, _known_devices, _last_full_scan_at, _last_os_count
     _known_devices = list(devices)
     _known_indices = sorted({
         d["index"] for d in devices
-        if d.get("available", True) or d.get("in_use")
+        if d.get("available", True) or d.get("in_use") or d.get("busy")
     })
     _last_os_count = os_count
     _last_full_scan_at = time.monotonic()

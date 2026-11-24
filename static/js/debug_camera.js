@@ -167,7 +167,7 @@
 
       var meta = document.createElement("div");
       meta.className = "camera-card__meta";
-      ["判定", "状態", "解析fps", "AI", "遅延", "無動作", "視聴"].forEach(function (label) {
+      ["判定", "状態", "解析fps", "AI", "遅延", "無動作", "ふらつき", "視聴"].forEach(function (label) {
         var box = document.createElement("span");
         box.appendChild(document.createTextNode(label + " "));
         var key = document.createElement("b");
@@ -337,6 +337,18 @@
       }
       f["無動作"].textContent = (row.still_seconds === null || row.still_seconds === undefined)
         ? "-" : row.still_seconds + "秒";
+      // ふらつき(表示専用): 傾き変動幅[°] / 横揺れ[胴体長比]。参考閾値超で橙
+      if (f["ふらつき"]) {
+        if (row.people > 0 && (row.sway_tilt || row.sway_lateral)) {
+          f["ふらつき"].textContent =
+            (row.sway_tilt || 0).toFixed(0) + "° / " + (row.sway_lateral || 0).toFixed(2);
+          f["ふらつき"].className =
+            ((row.sway_tilt || 0) > 15 || (row.sway_lateral || 0) > 0.30) ? "is-warn" : "";
+        } else {
+          f["ふらつき"].textContent = "-";
+          f["ふらつき"].className = "";
+        }
+      }
       f["視聴"].textContent = row.viewers ? row.viewers + "人" : "-";
 
       var age = row.frame_age;
@@ -768,6 +780,8 @@
       }
       cell(delayLabel(row.frame_age), delayTone(row.frame_age));
       cell(row.still_seconds !== undefined && row.still_seconds !== null ? row.still_seconds + "秒" : "-");
+      cell(row.people ? ((row.sway_tilt || 0).toFixed(0) + "°/" + (row.sway_lateral || 0).toFixed(2)) : "-",
+           ((row.sway_tilt || 0) > 15 || (row.sway_lateral || 0) > 0.30) ? "is-warn" : "");
       cell(row.viewers ? row.viewers + "人" : "-");
       cell(phaseLabel, phase === "running" ? "is-ok" : (phase === "error" ? "is-danger" : ""));
       if (row.error) {

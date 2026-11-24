@@ -309,6 +309,18 @@ AI_FALL_CONFIRM_COUNT = 8
 # 旧運用へ戻す場合: 退避した旧ファイルを fall_detection_lstm.keras へ復元し、
 # AI_NORMALIZE_FALL_INPUT=False にする(正規化の有無はモデルと必ずセットで切り替える)。
 AI_FALL_MODEL_FILENAME = "fall_detection_lstm.keras"
+# 転倒モデルの**アンサンブル構成**(2026-11-24)。
+# 存在するファイルだけを学習対象に合議(確率平均)する。無いメンバーは
+# 自動でスキップ = 単一モデル運用との互換。再学習(train_fall_ensemble)は
+# 同じファイル群へ上書き保存するので、反映後はサーバー再起動が必要。
+AI_FALL_MODEL_FILES = [
+    "fall_detection_lstm.keras",
+    "fall_detection_lstm_e2.keras",
+    "fall_detection_lstm_e3.keras",
+]
+# 再学習時のアンサンブル人数と、窓のミラー反転augの有無
+AI_RETRAIN_FALL_ENSEMBLE = 3
+AI_RETRAIN_FALL_AUGMENT = True
 # 新モデル(grouped+normalized)は入力を腰中心・体幹尺度で正規化する。
 # core/training.py の build_fall_dataset も同じ正規化で学習するので、この2つは常に一致させる。
 AI_NORMALIZE_FALL_INPUT = True
@@ -328,10 +340,20 @@ AI_VELOCITY_HORIZONTAL_DEG = 60.0  # ②の水平判定(度)
 AI_VELOCITY_STAY_DEG = 45.0        # ③の「倒れたまま」判定(度)
 AI_VELOCITY_STAY_FRAMES = 15       # ③の維持フレーム(15=約0.5秒 @30fps)
 AI_VELOCITY_CONFIDENCE = 0.90      # ルール発火時の転倒確率(表示・Alert信頼度)
-# 発火のラッチ解除: 水平未満(=起き上がった)がこのフレーム数続いて初めて解除。
+# 発火のラッチ解除: 水平未満(=起き上がった)がこのフレーム数続いて解除。
 # ラッチする理由: 急転倒イベントは約1秒で30フレーム履歴から滑り落ちるが、
 # 「倒れたまま」は転倒の継続。一時的信号だとLSTM確認(8回≈1.3秒)に届かない(実測で判明)。
 AI_VELOCITY_RELEASE_FRAMES = 10    # 約0.33秒 @30fps
+# --- CLIPアラート検証官(旧 code\ai 転用 / 2026-11-24) ---
+# 旧aiはCLIPを主検知にして「微妙」だった。使い方を**FALL !!!確定瞬間の
+# ゼロショット検証**に変更: 人物クロップを見て「床に倒れている人」を
+# 否定したらアラートを拒否する(しゃがみ/前かがみ誤検知対策)。
+# フェイルオープン設計: CLIPが無い/壊れた環境では素通しし、検知は絶対に止めない。
+# 検証1回はCPUで100〜300ms → 人物あたり AI_CLIP_CHECK_SECONDS 秒に1回まで。
+AI_CLIP_VERIFY = True
+AI_CLIP_MODEL = "openai/clip-vit-base-patch32"
+AI_CLIP_MIN_LYING = 0.5            # 「lying」の softmax確率がこれ未満なら拒否
+AI_CLIP_CHECK_SECONDS = 10.0
 # 解析映像のJPEG品質(1〜100)
 AI_JPEG_QUALITY = 80
 # 異常検知から録画する秒数(0 で録画しない)

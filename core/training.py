@@ -193,7 +193,31 @@ def normalize_landmarks(data):
     return lm.reshape(-1, FEATURES).astype(np.float32)
 
 
-def build_fall_dataset(directory=None, stride=STRIDE):
+# 左右対称の関節ペア(0始まり)。反転augで入れ替える
+FLIP_PAIRS = [
+    (2, 5), (3, 4), (6, 7), (8, 9), (10, 11),
+    (11, 12), (13, 14), (15, 16), (17, 18), (19, 20), (21, 22),
+    (23, 24), (25, 26), (27, 28), (29, 30), (31, 32),
+]
+
+
+def flip_landmarks(data):
+    """ミラー反転aug: x→1-x, z→-z, 左右関節を交換
+
+    転倒の动力学は左右対称なので、ラベルは不変のままデータだけを倍にできる。
+    39本しかない実撮影データの過学習(見逃し12%)への、撮影不要の最も安い対策。
+    """
+    import numpy as np
+
+    lm = np.asarray(data, dtype=np.float32).reshape(-1, 33, 3).copy()
+    for a, b in FLIP_PAIRS:
+        lm[:, [a, b], :] = lm[:, [b, a], :]
+    lm[:, :, 0] = 1.0 - lm[:, :, 0]
+    lm[:, :, 2] = -lm[:, :, 2]
+    return lm.reshape(-1, FEATURES).astype(np.float32)
+
+
+def build_fall_dataset(directory=None, stride=STRIDE, augment=False):
     """train_data/*.csv → X (N,30,99) / y (N,) を作る
 
     戻り値: (X, y, rows, skipped, groups)
@@ -205,6 +229,8 @@ def build_fall_dataset(directory=None, stride=STRIDE):
     AI_NORMALIZE_FALL_INPUT=True(既定)のとき X は正規化済み(腰中心/体幹尺度)。
     推論側(core/ai_engine.py)も同じ正規化をするため、ここを切り替える場合は
     モデルファイル名(AI_FALL_MODEL_FILENAME)とセットで揃えること。
+    augment=True のとき、ミラー反転コピーを追加(窓数ほぼ2倍。転倒は
+    左右対称なのでラベル不変 — groups も同じファイル指のまま)。
     """
     import numpy as np
 
@@ -220,18 +246,24 @@ def build_fall_dataset(directory=None, stride=STRIDE):
         if data is None:
             skipped.append((name, error))
             continue
-        if normalize:
-            data = normalize_landmarks(data)
-        sequences = create_sequences(data, SEQUENCE_LENGTH, stride)
+        # 反転は生の99値(画像座標)で行い、その後に正規化する(順序が結果に影響)
+        variants = [data]
+        if augment:
+            variants.append(flip_landmarks(data))
+        count = 0
+        for variant in variants:
+            v = normalize_landmarks(variant) if normalize else variant
+            sequences = create_sequences(v, SEQUENCE_LENGTH, stride)
+            X.extend(sequences)
+            y.extend([label] * len(sequences))
+            groups.extend([file_index] * len(sequences))
+            count += len(sequences)
         if not sequences:
             skipped.append((name, f"フレーム数不足({len(data)} < {SEQUENCE_LENGTH})"))
             continue
-        X.extend(sequences)
-        y.extend([label] * len(sequences))
-        groups.extend([file_index] * len(sequences))
         rows.append({
             "file": name, "label": label, "frames": len(data),
-            "sequences": len(sequences), "first": len(y) - len(sequences),
+            "sequences": count, "first": len(y) - count, "augmented": bool(augment),
         })
 
     return (
@@ -389,13 +421,20 @@ def _group_split(groups, y, test_size=0.2, seed=42):
     return train_mask, test_mask
 
 
-def train_fall(X, y, epochs=50, batch_size=16, test_size=0.2, seed=42, verbose=1, groups=None):
+def train_fall(X, y, epochs=50, batch_size=16, test_size=0.2, seed=42, verbose=1, groups=None,
+               class_weighted=True, init_seed=None):
     """転倒モデルを学習し (model, metrics, test分割) を返す
 
     groups(=build_fall_datasetの5番目)を渡すと**CSVファイル単位**で
     学習/検証に分割する(ai2.0のgrouped評価相当)。同じ行動の連続窓が
     両側に散ると見かけの精度が上がるため、窓ランダム分割より正直な数字になる。
     groups 指定なし(古いデータセット)の場合は従来どおり stratify 分割。
+
+    class_weighted=True(既定): FALL窓の重みを吊り上げる。
+      実測で fall 388 / normal 1,860窓の不均衡のまま無重み学習していたため、
+      モデルがNORMAL側へ傾き見逃し12%の要因になっていた(2026-11-24)。
+    init_seed: 重み初期化のみのシード(分割は seed のまま)。
+      アンサンブルのメンバー違いに使う — train_fall_ensemble 参照。
     """
     import numpy as np
     from sklearn.metrics import classification_report, confusion_matrix
@@ -410,11 +449,29 @@ def train_fall(X, y, epochs=50, batch_size=16, test_size=0.2, seed=42, verbose=1
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=test_size, random_state=seed, stratify=y
         )
+
+    # 再現可能な初期化(アンサンブルのメンバー差はここだけ)
+    import random
+    rng = int(init_seed if init_seed is not None else seed)
+    random.seed(rng)
+    np.random.seed(rng)
+    try:
+        import tensorflow as tf
+        tf.keras.utils.set_random_seed(rng)
+    except Exception:  # noqa: BLE001
+        pass
+
     model = build_fall_model((X.shape[1], X.shape[2]))
+    weights = None
+    if class_weighted:
+        n0 = max(1, int(np.sum(y_train == 0)))
+        n1 = max(1, int(np.sum(y_train == 1)))
+        total = n0 + n1
+        weights = {0: total / (2.0 * n0), 1: total / (2.0 * n1)}
     model.fit(
         X_train, y_train,
         validation_data=(X_test, y_test),
-        epochs=epochs, batch_size=batch_size,
+        epochs=epochs, batch_size=batch_size, class_weight=weights,
         callbacks=[EarlyStopping(monitor="val_loss", patience=8, restore_best_weights=True)],
         verbose=verbose,
     )
@@ -431,6 +488,43 @@ def train_fall(X, y, epochs=50, batch_size=16, test_size=0.2, seed=42, verbose=1
         "train_count": int(len(X_train)),
         "test_count": int(len(X_test)),
     }, (X_test, y_test, prob)
+
+
+def train_fall_ensemble(X, y, groups=None, n_models=3, seed=42, epochs=50,
+                        batch_size=16, verbose=0, **kwargs):
+    """異なる初期化シードで n_models 個学習し、確率平均のアンサンブルにする
+
+    动机(実測 2026-11-19): 同じデータ・同じ構成で再学習した候補が
+    現行より 1.2pt 悪かった = 単一学習のシード分散がそのまま結果にでる。
+    分割は seed 固定(=同一テスト集合で公平比較)、初期化だけずらす。
+    戻り値: (models, metrics, (X_test, y_test, avg_prob))
+    """
+    import numpy as np
+    from sklearn.metrics import confusion_matrix
+
+    models, probs = [], []
+    metrics = None
+    split = None
+    for k in range(max(1, int(n_models))):
+        model, metrics, (X_test, y_test, prob) = train_fall(
+            X, y, groups=groups, seed=seed, init_seed=seed + 101 * k,
+            epochs=epochs, batch_size=batch_size, verbose=verbose, **kwargs)
+        models.append(model)
+        probs.append(prob)
+        split = (X_test, y_test)
+    avg = np.mean(probs, axis=0)
+    pred = (avg >= 0.5).astype(int)
+    cm = confusion_matrix(y_test, pred)
+    acc = float(np.mean(pred == y_test))
+    return models, {
+        "val_loss": metrics["val_loss"],
+        "val_accuracy": round(acc, 4),
+        "confusion": [[int(cm[0][0]), int(cm[0][1])], [int(cm[1][0]), int(cm[1][1])]],
+        "report": metrics["report"],
+        "train_count": metrics["train_count"],
+        "test_count": metrics["test_count"],
+        "members": len(models),
+    }, (split[0], split[1], avg)
 
 
 def train_state(X, y, n_classes, epochs=50, batch_size=16, test_size=0.2, seed=42, verbose=1):
@@ -473,10 +567,17 @@ def train_state(X, y, n_classes, epochs=50, batch_size=16, test_size=0.2, seed=4
 
 
 def evaluate_fall_at_threshold(model, X, y, threshold):
-    """運用閾値での正解率・誤検知率・見逃し率を返す"""
+    """運用閾値での正解率・誤検知率・見逃し率を返す
+
+    model には単一モデルまたは **モデルリスト(アンサンブル)** を渡せる。
+    リストの場合は確率の平均で判定する(実行時の ai_engine と同じ合議)。
+    """
     import numpy as np
 
-    prob = model.predict(X, verbose=0).reshape(-1)
+    if isinstance(model, (list, tuple)):
+        prob = np.mean([m.predict(X, verbose=0).reshape(-1) for m in model], axis=0)
+    else:
+        prob = model.predict(X, verbose=0).reshape(-1)
     pred = (prob >= threshold).astype(int)
     tn = int(np.sum((y == 0) & (pred == 0)))
     fp = int(np.sum((y == 0) & (pred == 1)))
