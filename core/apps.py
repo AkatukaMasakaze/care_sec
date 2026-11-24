@@ -210,6 +210,19 @@ class CoreConfig(AppConfig):
                         type(exc).__name__, exc), "error")
                     if first:
                         print(f"[RealtimeAI] 常時稼働の起動に失敗: {type(exc).__name__}: {exc}")
+                # 録画のプライバシー保存期間(30日)の自動削除。内部ガードで
+                # 実際の実行は RECORDING_CLEANUP_MINUTES に1回程度(这里是ほぼ空振り)
+                try:
+                    from . import retention
+
+                    removed = retention.cleanup_expired()
+                    if removed:
+                        readiness.note("sys", "録画を%d件 自動削除しました(保存期間超過)" % removed)
+                except Exception as exc:  # noqa: BLE001 -掃除の失敗で解析/Webは止めない
+                    import logging as _logging
+
+                    _logging.getLogger(__name__).warning(
+                        "録画の自動削除でエラー: %s: %s", type(exc).__name__, exc)
                 if first:
                     if not ai_engine.devices():
                         readiness.note("camera", "現在カメラが見つかりません(接続されると自動で開始します)", "warn")

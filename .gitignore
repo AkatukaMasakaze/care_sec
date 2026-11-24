@@ -12,6 +12,11 @@ env/
 *.log
 *.lock
 .ai_always_on.lock
+# 監視ポーラー(ai2_watchdog_poll.py)が保存するセッションCookie。
+# ログイン実体のキーそのものなので追跡しない。次コミット時に必ず
+#   git rm --cached .watchdog_cookie
+# で追跡解除すること(履歴に残った過去分は ui_check_tmp 削除で無効化される)。
+.watchdog_cookie
 
 # --- データベース(利用者・介護士・異常検知の実データを含む) ---
 db.sqlite3

@@ -340,6 +340,27 @@ class Recording(models.Model):
             return f"{h}:{m:02d}:{s:02d}"
         return f"{m:02d}:{s:02d}"
 
+    @property
+    def retention_days(self):
+        """保存期間(日)。settings.RECORDING_RETENTION_DAYS。0=自動削除なし"""
+        from django.conf import settings as django_settings
+
+        return int(getattr(django_settings, "RECORDING_RETENTION_DAYS", 30) or 0)
+
+    @property
+    def days_left(self):
+        """自動削除まであと何日か(録画開始からのカウントダウン。表示は残り日数のみ)
+
+        境界: 記録当日=retention日, 削除予定日当日=0。None=自動削除無効設定。
+        """
+        days = self.retention_days
+        if days <= 0:
+            return None
+        from datetime import timedelta
+
+        cutoff_elapsed = (timezone.now() - self.started_at) // timedelta(days=1)
+        return max(days - int(cutoff_elapsed), 0)
+
 
 class AlertReport(models.Model):
     """解決報告(誰だったか/身体的問題/対応内容/コメント)"""

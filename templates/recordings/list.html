@@ -6,6 +6,9 @@
 <div class="page-header">
   <h1>録画一覧</h1>
   <p class="page-header__sub">AI監視が自動録画した「転倒の瞬間・あやしい場面」の映像一覧</p>
+  {% if retention_days > 0 %}
+  <p class="page-header__sub">※ 録画はプライバシー保護のため<strong>{{ retention_days }}日</strong>で自動的に削除されます(カードの「残り◯日」が削除までの日数)</p>
+  {% endif %}
 </div>
 
 <div class="filter-bar">
@@ -25,6 +28,9 @@
       {% endif %}
       <span class="recording-card__play" aria-hidden="true">▶</span>
       <span class="recording-card__duration">{{ rec.duration_label }}</span>
+      {% if retention_days > 0 %}
+      <span class="recording-card__retention{% if rec.days_left <= 5 %} is-soon{% endif %}">残り{{ rec.days_left }}日</span>
+      {% endif %}
     </div>
     <div class="recording-card__meta">
       <strong>{{ rec.started_at|date:"Y/m/d H:i:s" }}</strong>

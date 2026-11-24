@@ -358,6 +358,15 @@ AI_CLIP_CHECK_SECONDS = 10.0
 AI_JPEG_QUALITY = 80
 # 異常検知から録画する秒数(0 で録画しない)
 AI_RECORDING_SECONDS = 8
+# --- 録画の保存期間(プライバシー保護 / 2026-11-24) ---
+# 「全削除」ボタンを押されなくても、録画開始からこの日数が過ぎた録画は
+# **サーバー側で自動削除**(DB行+media/recordings の mp4/jpg 実ファイル)。
+# 介護士が忘れたまま数ヶ月蓄積=プライバシー侵害になるリスクへの歯止め。
+# 0 にすると自動削除なし(非推奨)。一覧ページは残り日数のみを表示する。
+RECORDING_RETENTION_DAYS = 30
+# 自動削除の実際の実行間隔(分)。ページ表示時にも走るが、表示ゼロの日でも
+# apps.py の常駐ループ(this 間隔)で欠落なく掃除する。
+RECORDING_CLEANUP_MINUTES = 30
 # AIが検知した異常を紐づけるカメラ台帳のID(None の場合はデバイスごとに自動作成)
 AI_ALERT_CAMERA_ID = None
 

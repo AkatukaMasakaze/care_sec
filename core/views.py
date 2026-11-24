@@ -1,4 +1,5 @@
 """CARE SEC 転倒・異常検知システム / ビュー(検証用実装)"""
+import logging
 import os
 import time
 from datetime import datetime, timedelta
@@ -20,6 +21,8 @@ from .demo_alerts import create_demo_alert
 from .models import (
     AISettings, Alert, AlertReport, Camera, Recording, Resident, User, UserProfile,
 )
+
+logger = logging.getLogger(__name__)
 from .permissions import admin_required
 
 
@@ -486,6 +489,16 @@ def report_create(request):
 # ================= 録画 =================
 @login_required
 def recording_list(request):
+    # プライバシー保存期間(core/retention.py): 古い順に自動削除。
+    # 表示の残り日数が「まだあるのに消えない」に見えないよう、ページ表示時も掃除する
+    # (内部ガードで15分に1回程度しか実クエリを走らせない=軽量)。
+    from core import retention
+
+    try:
+        retention.cleanup_expired()
+    except Exception as exc:  # noqa: BLE001 -掃除の失敗で一覧は止めない
+        logger.warning("録画の自動削除でエラー(一覧表示は継続): %s: %s",
+                       type(exc).__name__, exc)
     current_kind = request.GET.get("kind", "")
     recordings = Recording.objects.select_related("camera")
     if current_kind in Recording.Kind.values:
@@ -493,6 +506,7 @@ def recording_list(request):
     return render(request, "recordings/list.html", {
         "recordings": recordings,
         "current_kind": current_kind,
+        "retention_days": retention.retention_days(),
     })
 
 

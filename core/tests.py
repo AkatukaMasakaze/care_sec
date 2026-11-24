@@ -301,3 +301,112 @@ class ProfileAndReportSplitTest(TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertIn("報告を入力", res.content.decode("utf-8"))
         self.assertIn("/reports/%d/" % self.alert.id, res.content.decode("utf-8"))
+
+
+class RecordingRetentionTest(TestCase):
+    """録画の30日自動削除(プライバシー保存期間 / 2026-11-24)
+
+    「全削除」ボタンを押されない運用でも録画が溜まり続けないよう、
+    Recording は開始から RECORDING_RETENTION_DAYS 日で DB行+実ファイルを削除する。
+    一覧の表示は「残り日数」のみ。
+    """
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        from pathlib import Path
+
+        from django.test import override_settings
+
+        self._tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self._tmp, True)
+        self._patch = override_settings(MEDIA_ROOT=self._tmp)
+        self._patch.enable()
+        self.addCleanup(self._patch.disable)
+        self.media_root = Path(self._tmp)
+        self.camera = Camera.objects.create(name="保存期間カメラ", location="棟B")
+
+    def _make(self, name, age_days, with_alert=False):
+        from datetime import timedelta
+
+        from core.models import Recording
+
+        started = timezone.now() - timedelta(days=age_days)
+        rec_dir = self.media_root / "recordings"
+        rec_dir.mkdir(parents=True, exist_ok=True)
+        (rec_dir / f"{name}.mp4").write_bytes(b"fake-video")
+        (rec_dir / f"{name}.jpg").write_bytes(b"fake-thumb")
+        alert = None
+        if with_alert:
+            alert = Alert.objects.create(
+                kind=Alert.Kind.FALL, camera=self.camera,
+                occurred_at=started, confidence=0.9,
+                thumbnail_url=f"/media/recordings/{name}.jpg",
+            )
+        return Recording.objects.create(
+            kind=Recording.Kind.FALL, camera=self.camera, alert=alert,
+            started_at=started, ended_at=started + timedelta(seconds=8),
+            video_url=f"/media/recordings/{name}.mp4",
+            thumbnail_url=f"/media/recordings/{name}.jpg",
+            reason="テスト",
+        )
+
+    def test_days_left_counts_down(self):
+        """残り日数 = 30 - 経過日数(当日=30, 29日経過=1, 30日経過=0)"""
+        self.assertEqual(self._make("fresh", 0).days_left, 30)
+        self.assertEqual(self._make("nearly", 29).days_left, 1)
+        self.assertEqual(self._make("due", 30).days_left, 0)
+
+    def test_cleanup_removes_expired_rows_and_files(self):
+        """期間超過のみ削除。未超過は行とファイルが残る"""
+        from core import retention
+
+        old = self._make("old", 31)
+        fresh = self._make("fresh", 10, with_alert=True)
+        removed = retention.cleanup_expired(force=True)
+        self.assertEqual(removed, 1)
+        self.assertFalse(Recording_exists(old.id))
+        self.assertFalse((self.media_root / "recordings" / "old.mp4").exists())
+        self.assertFalse((self.media_root / "recordings" / "old.jpg").exists())
+        self.assertTrue(Recording_exists(fresh.id))
+        self.assertTrue((self.media_root / "recordings" / "fresh.mp4").exists())
+
+    def test_alert_thumbnail_reference_cleared(self):
+        """削除される録画のjpgをアラートサムネイルが指していたら参照を外す(表示壊れ防止)"""
+        from core import retention
+        from core.models import Recording
+
+        old = self._make("old2", 45, with_alert=True)
+        alert = old.alert
+        retention.cleanup_expired(force=True)
+        alert.refresh_from_db()
+        self.assertEqual(alert.thumbnail_url, "")
+
+    def test_list_page_shows_days_left_only(self):
+        """一覧は残り日数のみ表示。削除日などの文言は要求外なので出さない"""
+        from core.models import Recording
+
+        self._make("shown", 20)
+        user = User.objects.create_user("ret_viewer", password="x", is_admin=True)
+        self.client.force_login(user)
+        res = self.client.get("/recordings/")
+        self.assertContains(res, "残り10日")
+        self.assertContains(res, "30日</strong>で自動的に削除")
+
+    def test_zero_retention_disables_auto_delete(self):
+        """RECORDING_RETENTION_DAYS=0 は「自動削除しない」設定も成立(運用逃口)"""
+        from django.test import override_settings
+
+        from core import retention
+        from core.models import Recording
+
+        old = self._make("keep", 400)
+        with override_settings(RECORDING_RETENTION_DAYS=0):
+            self.assertIsNone(retention.cleanup_expired(force=True))
+        self.assertTrue(Recording.objects.filter(id=old.id).exists())
+
+
+def Recording_exists(recording_id):
+    from core.models import Recording
+
+    return Recording.objects.filter(id=recording_id).exists()

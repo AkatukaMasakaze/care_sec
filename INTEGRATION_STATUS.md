@@ -2461,3 +2461,33 @@ DSHOW形式交渉はUSB总线で直列+ハングするため(実測 index1 MSMF=
 **残課題**: C270 の MSMF ハングはOS/ドライバ側(index1のみ)。検知プローブは budget 6秒で
 打ち切る設計どおり。暫定的な被害なし。万一の再発時は supervise.log の code と
 ai2_watchdog.log 末尾を参照。
+
+---
+
+## 50. 2026-11-24 録画のプライバシー保存期間(30日自動削除)+残り日数表示
+
+### 依頼
+「全削除」ボタンを長期間押さない運用では録画が無限に蓄積しプライバシー侵害の恐れ。
+録画すべてにカウントダウンを開始し、30日間のみ保存。表示は**残り日数のみ**。
+
+### 実装(ai2本番 / ai2_bak同期済)
+- `settings.py`: `RECORDING_RETENTION_DAYS=30` / `RECORDING_CLEANUP_MINUTES=30`(0=自動削除なしの逃げ口)
+- `core/retention.py`(新規): `cleanup_expired()` — 超過Recordingの**DB行+media/recordings の
+  mp4/jpg実ファイル**を削除。ページ表示と常駐ループの両方から呼ばれるが、内部ガードで
+  15分に1回程度しか実クエリしない。外部URL(S3 presigned)は行だけ削除しファイル操作しない。
+  MEDIA_ROOT外参照は skip(パストラバーサル対策)。Windowsで開かれているファイルは fail 扱いで次回再試行。
+  削除される録画のjpgを**アラートサムネイルが指していたら参照を空に戻す**(検知一覧の表示壊れ防止)
+- `models.py`: `Recording.days_left`(経過=floor、残り=30-経過。当日30→期日0)、`retention_days`
+- 走る場所: `views.recording_list`(表示時) + `apps.py` 常駐30秒ループ(ページ非表示の日も掃除)
+- `recordings/list.html`: サムネイル左下に「**残り◯日**」バッジ(5日以内は橙色)。
+  ヘッダーに「30日で自動的に削除されます」注記。削除日などの余計な表示はなし(要求どおり)
+- `accounts/settings.html`: 全削除ボタンの説明に自動削除の追記(ボタンは「早めに消すための操作」)
+- `style.css`: `.recording-card__retention`(+`.is-soon`)
+
+### 検証
+- `manage.py test core` **28件OK**(新 RecordingRetentionTest 5件: カウントダウン境界
+  30/1/0、超過のみ削除+実ファイル消滅、アラート参照クリア、一覧の「残りN日」表示、
+  RETENTION=0 で自動削除無効)。テストログで "[Retention] 保存期間30日を経過した録画 1件を
+  自動削除しました(実ファイル 2件削除)" を実出力で確認
+- 稼働中サーバー反映後: 録画1件(11/20)=「残り26日」バッジ表示、両カメラ 26.6/26.9fps 継続 ✓
+- ※ tests.py 追記時に既存クラスの途中へ挿す事故が発生→末尾へ移動し直して全緑確認済

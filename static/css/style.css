@@ -596,6 +596,20 @@ textarea:focus-visible {
   padding: 0 6px;
   border-radius: 2px;
 }
+/* 自動削除までの残り日数(プライバシー保存期間)。削除が近いほど強調 */
+.recording-card__retention {
+  position: absolute; left: 7px; bottom: 7px;
+  background: rgba(0, 0, 0, .55);
+  color: var(--color-muted, #9fb0c0);
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 0 6px;
+  border-radius: 2px;
+}
+.recording-card__retention.is-soon {
+  background: rgba(210, 130, 30, .85);
+  color: #fff;
+}
 .recording-card__meta { padding: 9px 12px; font-size: 12.5px; }
 .recording-card__meta p { margin: 3px 0 0; color: var(--color-muted); font-size: 11.5px; }
 .recording-card__meta small { color: var(--color-muted); }
