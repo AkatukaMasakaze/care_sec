@@ -32,6 +32,23 @@ ALLOWED_HOSTS = ["localhost", "127.0.0.1", "testserver"] + [
     if host.strip()
 ]
 
+# --- 本番(DEBUG=0)のhttps前提の強化(AWS Setup Guide 9章 / DuckDNS+certbot) ---
+if not DEBUG:
+    # nginx が X-Forwarded-Proto: https を立ててプロキシする前提(certbot --nginx が設定)。
+    # これが無いと https で来ても Django は http と誤認し、リダイレクトループ/クッキー矛盾になる
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    # POST(ログイン・報告・設定)のOrigin検証を通過させる https origin(カンマ区切り env)
+    CSRF_TRUSTED_ORIGINS = [
+        origin.strip()
+        for origin in os.environ.get("CARE_SEC_CSRF_ORIGINS", "").split(",")
+        if origin.strip()
+    ]
+    SESSION_COOKIE_SECURE = True      # 認証クッキーは https でしか送らない
+    CSRF_COOKIE_SECURE = True
+    SESSION_COOKIE_HTTPONLY = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    X_FRAME_OPTIONS = "SAMEORIGIN"    # 録画・ダッシュボードを外部iframeに埋めさせない
+
 # Application definition
 
 INSTALLED_APPS = [

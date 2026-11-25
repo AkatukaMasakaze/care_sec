@@ -703,6 +703,107 @@ aws ec2 authorize-security-group-ingress --group-id $SG_ID \
 ただし<strong>常時映像の主経路としては Push 型を第一候補</strong>に置き、
 ①Pull型がやりたい / ②SSH公開ポートを消したい / ③複数拠点を1画面に集約したい、のどれかに当たったら Tailscale を採用するのがうまい使い方。
 ai2 側は IPカメラの URL を変えるだけなので<strong>後から切り替え自由</strong>(まずPushで始めて、運用が見えてから Pull+Tailscale に寄せる移行も可)。</div>
+
+<h3>12.4 全体流れ図(Pi3 → EC2 全処理構成 / 2026-11-25 実構成)</h3>
+<svg viewBox="0 0 960 640" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;font-family:sans-serif">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0b5fa5"/>
+    </marker>
+    <marker id="arrg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1a7f37"/>
+    </marker>
+  </defs>
+
+  <!-- 施設 -->
+  <rect x="20" y="30" width="270" height="250" rx="12" fill="#eef6fd" stroke="#9cc3e5"/>
+  <text x="155" y="55" text-anchor="middle" font-size="15" font-weight="bold" fill="#0b3d6b">施設(オンプレ)</text>
+
+  <rect x="50" y="80" width="110" height="52" rx="8" fill="#fff" stroke="#0b5fa5"/>
+  <text x="105" y="102" text-anchor="middle" font-size="12" font-weight="bold">Camera Module</text>
+  <text x="105" y="120" text-anchor="middle" font-size="11" fill="#5b6b7b">居室/共用部</text>
+
+  <rect x="50" y="160" width="210" height="86" rx="8" fill="#fff" stroke="#0b5fa5"/>
+  <text x="155" y="182" text-anchor="middle" font-size="12" font-weight="bold">Raspberry Pi 3</text>
+  <text x="155" y="200" text-anchor="middle" font-size="11">rpicam-vid(ハードH.264)</text>
+  <text x="155" y="216" text-anchor="middle" font-size="11">640x480@10fps → RTSPプッシュ</text>
+  <text x="155" y="234" text-anchor="middle" font-size="10.5" fill="#b35900">systemd Restart=always(切れても復帰)</text>
+
+  <line x1="105" y1="132" x2="105" y2="160" stroke="#0b5fa5" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- 回線 -->
+  <line x1="260" y1="203" x2="380" y2="203" stroke="#0b5fa5" stroke-width="2.5" marker-end="url(#arr)"/>
+  <text x="320" y="188" text-anchor="middle" font-size="11" font-weight="bold" fill="#0b5fa5">上り ~1Mbps/台</text>
+  <text x="320" y="222" text-anchor="middle" font-size="10.5" fill="#5b6b7b">rtsp://carecam:鍵@EC2:8554/cam1</text>
+
+  <!-- AWS VPC -->
+  <rect x="380" y="30" width="560" height="470" rx="12" fill="#f3faf4" stroke="#9fd3a8"/>
+  <text x="660" y="55" text-anchor="middle" font-size="15" font-weight="bold" fill="#1a5f2a">AWS VPC(単一EC2 t3.large / Ubuntu 26.04)</text>
+
+  <rect x="398" y="80" width="120" height="250" rx="8" fill="#fff" stroke="#1a7f37"/>
+  <text x="458" y="102" text-anchor="middle" font-size="12" font-weight="bold">SG関門</text>
+  <text x="458" y="122" text-anchor="middle" font-size="10.5">8554/tcp</text>
+  <text x="458" y="138" text-anchor="middle" font-size="10.5" fill="#b35900">施設IP/32のみ</text>
+  <text x="458" y="160" text-anchor="middle" font-size="10.5">443/80 公開</text>
+  <text x="458" y="176" text-anchor="middle" font-size="10.5">22 自分のIPのみ</text>
+  <text x="458" y="200" text-anchor="middle" font-size="10" fill="#5b6b7b">publish/read 鍵で</text>
+  <text x="458" y="214" text-anchor="middle" font-size="10" fill="#5b6b7b">二重に認証</text>
+
+  <rect x="548" y="80" width="180" height="74" rx="8" fill="#fff" stroke="#1a7f37"/>
+  <text x="638" y="102" text-anchor="middle" font-size="12" font-weight="bold">MediaMTX</text>
+  <text x="638" y="120" text-anchor="middle" font-size="11">paths: cam1 / cam2</text>
+  <text x="638" y="138" text-anchor="middle" font-size="10.5" fill="#5b6b7b">受信→再配信(ループバック)</text>
+
+  <rect x="548" y="180" width="180" height="120" rx="8" fill="#fff" stroke="#1a7f37"/>
+  <text x="638" y="200" text-anchor="middle" font-size="12" font-weight="bold">ai2(Django+AI)</text>
+  <text x="638" y="218" text-anchor="middle" font-size="10.5">gunicorn 1w・常駐スレッド</text>
+  <text x="638" y="234" text-anchor="middle" font-size="10.5">cv2 FFMPEG→MediaPipe pose</text>
+  <text x="638" y="250" text-anchor="middle" font-size="10.5">LSTM3名+速度ルール+CLIP</text>
+  <text x="638" y="268" text-anchor="middle" font-size="10.5">検知→録画→通知</text>
+  <text x="638" y="286" text-anchor="middle" font-size="10" fill="#5b6b7b">stream_url=rtsp://…@127.0.0.1</text>
+
+  <rect x="760" y="180" width="160" height="56" rx="8" fill="#fff" stroke="#1a7f37"/>
+  <text x="840" y="202" text-anchor="middle" font-size="12" font-weight="bold">db.sqlite3</text>
+  <text x="840" y="220" text-anchor="middle" font-size="10.5">異常/録画/アカウント</text>
+
+  <rect x="760" y="250" width="160" height="56" rx="8" fill="#fff" stroke="#1a7f37"/>
+  <text x="840" y="272" text-anchor="middle" font-size="12" font-weight="bold">media/</text>
+  <text x="840" y="290" text-anchor="middle" font-size="10.5">録画mp4・jpg(30日自動削除)</text>
+
+  <rect x="548" y="330" width="180" height="60" rx="8" fill="#fff" stroke="#1a7f37"/>
+  <text x="638" y="352" text-anchor="middle" font-size="12" font-weight="bold">nginx :443</text>
+  <text x="638" y="370" text-anchor="middle" font-size="10.5">static=直接 / media=通さない</text>
+
+  <line x1="518" y1="203" x2="398" y2="203" stroke="#1a7f37" stroke-width="0"/>
+  <line x1="518" y1="117" x2="548" y2="117" stroke="#1a7f37" stroke-width="2" marker-end="url(#arrg)"/>
+  <line x1="638" y1="154" x2="638" y2="180" stroke="#1a7f37" stroke-width="2" marker-end="url(#arrg)"/>
+  <line x1="728" y1="210" x2="760" y2="210" stroke="#1a7f37" stroke-width="2" marker-end="url(#arrg)"/>
+  <line x1="728" y1="278" x2="760" y2="278" stroke="#1a7f37" stroke-width="2" marker-end="url(#arrg)"/>
+  <line x1="638" y1="300" x2="638" y2="330" stroke="#1a7f37" stroke-width="2" marker-end="url(#arrg)"/>
+  <line x1="458" y1="330" x2="458" y2="117" stroke="#1a7f37" stroke-width="0"/>
+
+  <!-- ユーザー -->
+  <rect x="20" y="330" width="270" height="170" rx="12" fill="#fdf6ee" stroke="#e5c19c"/>
+  <text x="155" y="355" text-anchor="middle" font-size="14" font-weight="bold" fill="#8a5a17">介護士・管理者</text>
+  <rect x="50" y="375" width="210" height="60" rx="8" fill="#fff" stroke="#b35900"/>
+  <text x="155" y="397" text-anchor="middle" font-size="12" font-weight="bold">ブラウザ https://EIP or ドメイン</text>
+  <text x="155" y="415" text-anchor="middle" font-size="10.5">ログイン必須(全画面)</text>
+  <text x="155" y="460" text-anchor="middle" font-size="10.5" fill="#8a5a17">録画視聴も同じセッション鍵でのみ</text>
+
+  <line x1="260" y1="405" x2="548" y2="360" stroke="#b35900" stroke-width="2.5" marker-end="url(#arr)"/>
+  <text x="390" y="372" text-anchor="middle" font-size="11" font-weight="bold" fill="#b35900">443(TLS)</text>
+
+  <!-- media 保護経路 -->
+  <path d="M 728 360 C 780 360 800 330 820 306" fill="none" stroke="#c62828" stroke-width="2" stroke-dasharray="5,4" marker-end="url(#arr)"/>
+  <text x="795" y="352" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#c62828">/media はDjangoが</text>
+  <text x="795" y="366" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#c62828">ログイン判定後にだけ返す</text>
+
+  <!-- 底部注記 -->
+  <rect x="20" y="530" width="920" height="86" rx="10" fill="#fff" stroke="#d9e2ec"/>
+  <text x="40" y="556" font-size="12" font-weight="bold" fill="#1c2733">読み方</text>
+  <text x="40" y="576" font-size="11.5">・映像は「施設→AWS」の一方通行接続だけ(Piが外へ出る接続。施設側ポートは開かない)。EC2は MediaMTX 経由でローカルループバックから読むため回線を往復しない。</text>
+  <text x="40" y="594" font-size="11.5">・プライバシの要: 青=公開は443のみ / 緑=AWS内で完結 / 赤破線=録画ファイルはnginxが絶対直接出さず、Djangoのログイン認証を通ったときだけ届く(ガイド8章)。</text>
+</svg>
 </section>
 
 <!-- ================================================================ -->
