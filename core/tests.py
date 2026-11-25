@@ -410,3 +410,52 @@ def Recording_exists(recording_id):
     from core.models import Recording
 
     return Recording.objects.filter(id=recording_id).exists()
+
+
+class ProtectedMediaTest(TestCase):
+    """本番メディア配信はログイン済みユーザーのみ(AWS Setup Guide 8.3)
+
+    Djangoのテストクライアントは DEBUG=False で走るため、urls.py の
+    protected_media ルートが有効 = 本番と同じ経路を検証できる。
+    """
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        from pathlib import Path
+
+        from django.test import override_settings
+
+        self._tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self._tmp, True)
+        patch = override_settings(MEDIA_ROOT=self._tmp)
+        patch.enable()
+        self.addCleanup(patch.disable)
+        rec = Path(self._tmp) / "recordings"
+        rec.mkdir()
+        (rec / "clip.mp4").write_bytes(b"fake-video-bytes")
+        self.nurse = User.objects.create_user("media_nurse", password="x")
+
+    def test_anonymous_redirected_to_login(self):
+        """未ログインの /media/ アクセスは動画を見せずログインへ誘導する"""
+        res = self.client.get("/media/recordings/clip.mp4")
+        self.assertEqual(res.status_code, 302)
+        self.assertIn("/accounts/login/", res["Location"])
+
+    def test_logged_in_gets_file(self):
+        self.client.force_login(self.nurse)
+        res = self.client.get("/media/recordings/clip.mp4")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.headers["Content-Type"], "video/mp4")
+        self.assertIn("private", res.headers["Cache-Control"])
+
+    def test_traversal_is_denied(self):
+        """/media/../ 系は MEDIA_ROOT 外 = 404(FileResponseに到達しない)"""
+        self.client.force_login(self.nurse)
+        res = self.client.get("/media/../escape.txt")
+        self.assertIn(res.status_code, (400, 404))
+
+    def test_missing_file_is_404(self):
+        self.client.force_login(self.nurse)
+        res = self.client.get("/media/recordings/nope.mp4")
+        self.assertEqual(res.status_code, 404)

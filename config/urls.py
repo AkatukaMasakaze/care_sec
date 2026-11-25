@@ -2,7 +2,7 @@
 from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib.auth import views as auth_views
-from django.urls import path
+from django.urls import path, re_path
 
 from core import views
 from core.admin import admin_site
@@ -56,6 +56,17 @@ urlpatterns = [
     path("debug/camera/stream/", views.debug_camera_stream, name="debug_camera_stream"),
 ]
 
-# AI自動録画(mp4)などのメディアファイル配信(開発用。本番ではWebサーバー側で配信する)
+# AI自動録画(mp4)などのメディアファイル配信
+# - 開発(DEBUG=1): Django の static() が素で配信(手軽さ優先)
+# - 本番(DEBUG=0): protected_media view が **ログイン済みユーザーだけ**に配信
+#   (ガイド8.3。nginx は /media/ を静态配信しないこと。URL形は Recording.video_url
+#    に保存済みの /media/… とそのまま一致するので既存データ無変換)
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+else:
+    from core import protected_media
+
+    urlpatterns += [
+        re_path(r"^media/(?P<path>.+)$", protected_media.protected_media,
+                name="protected_media"),
+    ]

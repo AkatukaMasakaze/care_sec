@@ -144,7 +144,12 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.1/howto/static-files/
 
-STATIC_URL = "static/"
+# ※ 先頭スラッシュ必須。"static/" だと相対URLになり /accounts/login/ などの
+#    階層ページで /accounts/static/… を要求して404になる(実測: 本番nginxで再現)
+STATIC_URL = "/static/"
+# collectstatic の出力先(本番の nginx が alias で直接読む場所。ガイド8.4の
+# alias /srv/caresec/staticfiles/ はここ)。開発の runserver(DEBUG)では未使用
+STATIC_ROOT = BASE_DIR / "staticfiles"
 
 STATICFILES_DIRS = [BASE_DIR / "static"]
 

@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CARE SEC (ai2) AWSセットアップガイド</title>
+<style>
+  :root {
+    --ink: #1c2733; --muted: #5b6b7b; --line: #d9e2ec; --bg: #f6f8fa;
+    --brand: #0b5fa5; --ok: #1a7f37; --warn: #b35900; --bad: #c62828;
+    --code-bg: #101820; --code-ink: #d8e4ee;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Noto Sans JP", "Yu Gothic UI", Meiryo, sans-serif;
+         color: var(--ink); background: var(--bg); line-height: 1.7; }
+  header { background: linear-gradient(135deg, #0b3d6b, #0b5fa5); color: #fff; padding: 34px 24px 26px; }
+  header h1 { margin: 0 0 6px; font-size: 26px; }
+  header p { margin: 0; opacity: .85; font-size: 14px; }
+  main { max-width: 980px; margin: 0 auto; padding: 24px 20px 80px; }
+  nav.toc { background: #fff; border: 1px solid var(--line); border-radius: 10px;
+            padding: 14px 18px; margin: 18px 0 26px; font-size: 14px; }
+  nav.toc ol { margin: 6px 0 0; padding-left: 22px; columns: 2; column-gap: 34px; }
+  nav.toc a { color: var(--brand); text-decoration: none; }
+  nav.toc a:hover { text-decoration: underline; }
+  section { background: #fff; border: 1px solid var(--line); border-radius: 10px;
+            padding: 18px 22px; margin: 0 0 22px; }
+  h2 { font-size: 20px; border-bottom: 3px solid var(--brand); padding-bottom: 6px; margin-top: 4px; }
+  h3 { font-size: 16px; margin: 20px 0 8px; color: #0b3d6b; }
+  h4 { font-size: 14px; margin: 14px 0 6px; }
+  pre { background: var(--code-bg); color: var(--code-ink); padding: 12px 14px; border-radius: 8px;
+        overflow-x: auto; font-size: 12.5px; line-height: 1.55; font-family: "Consolas"," Cascadia Mono", monospace; }
+  code { font-family: Consolas, "Cascadia Mono", monospace; }
+  p code, li code, td code { background: #eef2f6; color: #0b3d6b; padding: 1px 5px; border-radius: 4px; font-size: 92%; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; margin: 8px 0; }
+  th, td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; }
+  th { background: #eef4fa; }
+  .ok { color: var(--ok); font-weight: 600; }
+  .warn { color: var(--warn); font-weight: 600; }
+  .bad { color: var(--bad); font-weight: 600; }
+  .callout { border-left: 4px solid var(--brand); background: #eef6fd; padding: 10px 14px;
+             border-radius: 0 8px 8px 0; margin: 12px 0; font-size: 14px; }
+  .callout.danger { border-color: var(--bad); background: #fdeeee; }
+  .callout.tip { border-color: var(--ok); background: #eefaf1; }
+  details { border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; margin: 10px 0; background: #fbfcfe; }
+  summary { cursor: pointer; font-weight: 600; color: var(--brand); }
+  .check { list-style: none; padding-left: 4px; }
+  .check li { margin: 4px 0; }
+  .check input { margin-right: 8px; }
+  footer { text-align: center; color: var(--muted); font-size: 12.5px; padding: 20px; }
+  .kbd { border: 1px solid #b6c2cf; border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: #f1f5f9; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>CARE SEC (ai2) AWSセットアップガイド</h1>
+  <p>Django介護見守りAI の本番移行 / Ubuntu 26.04 LTS・Amazon Linux 経由・t3.large・VPC・セキュリティグループ・メディアログイン限定配信</p>
+</header>
+<main>
+
+<nav class="toc">
+  <strong>目次</strong>
+  <ol>
+    <li><a href="#s1">はじめに・決定事項まとめ</a></li>
+    <li><a href="#s2">アーキテクチャ概要</a></li>
+    <li><a href="#s3">移行パターン選定(重要)</a></li>
+    <li><a href="#s4">ネットワーク: VPC・サブネット</a></li>
+    <li><a href="#s5">ファイアウォール: SG/NACL/OS層</a></li>
+    <li><a href="#s6">EC2インスタンス作成(Ubuntu 26.04/t3.large)</a></li>
+    <li><a href="#s7">アプリ展開(python・gunicorn・systemd)</a></li>
+    <li><a href="#s8">メディアパスをログインユーザーのみへ(本ガイドの核心)</a></li>
+    <li><a href="#s9">HTTPS(証明書・TLS)</a></li>
+    <li><a href="#s10">バックアップと復旧</a></li>
+    <li><a href="#s11">監視と運用</a></li>
+    <li><a href="#s12">カメラ接続(Pi/IPカメラ)</a></li>
+    <li><a href="#s13">コスト目安</a></li>
+    <li><a href="#s14">移行チェックリスト</a></li>
+    <li><a href="#s15">トラブルシューティング</a></li>
+  </ol>
+</nav>
+
+<!-- ================================================================ -->
+<section id="s1">
+<h2>1. はじめに・決定事項まとめ</h2>
+<p>このガイドは <code>C:\Users\student\code\ai2</code>(CARE SEC 転倒・異常検知)を AWS へ移す手順書です。
+Windows開発機特有の事情(USBカメラ2台・Frame Server・venv)はクラウドに持っていけないので、
+<strong>「AIエンジン単一プロセス」</strong>と<strong>「録画ファイルのプライバシ保護」</strong>を軸に構成します。</p>
+
+<table>
+  <tr><th>項目</th><th>決定</th><th>理由</th></tr>
+  <tr><td>OS</td><td>Ubuntu 26.04 LTS</td><td>希望指定。LTSサポート~2031。Python 3.13 が標準で ai2 の開発環境と同系列</td></tr>
+  <tr><td>インスタンスタイプ</td><td class="ok">t3.large(2vCPU/8GiB)— 妥当</td><td>実測根拠: TF2.20+MediaPipe+CLIP(torch)同居で RSS 約4〜5GB、CPUは2台間引きpose≈5/s×2+推論7ms で 2vCPU に収まる(開発機の有人27fpsはUSB側の数字)</td></tr>
+  <tr><td>リージョン</td><td>ap-northeast-1(東京)</td><td>施設からのレイテンシ最小。データは国内に置く(介護記録は機微)</td></tr>
+  <tr><td>DB</td><td>当面 SQLite + EBSスナップショット、将来 RDS</td><td>ai2 は SQLite 前提設計(<code>db.sqlite3</code> 単一ファイル)。小規模施設なら EBS 完結で十分</td></tr>
+  <tr><td>録画/画像保存</td><td>インスタンス上の EBS(<code>media/</code>)+ バックアップ</td><td><strong>S3パブリック bucket は使わない</strong>(プライバシ)。S3に出すなら Presigned URL 方式のみ。第8章</td></tr>
+  <tr><td>Web</td><td>nginx + gunicorn(systemd常駐)</td><td>requirements.txt に gunicorn==23.0.0 済み</td></tr>
+  <tr><td>AIエンジン</td><td>gunicorn 起動の同一プロセス内で常駐(<code>apps.py</code> スレッド)</td><td class="warn">workers は必ず 1。複数にするとAIスレッドが二重起動し、<code>_claim_ai_lock</code> で1つ以外シャットアウトされる(設計どおりだが無駄)</td></tr>
+</table>
+
+<div class="callout danger"><strong>開発環境と本番の既知の差分を先に理解する</strong><br>
+・tensorflow: Windows 2.21.0 / <strong>Linux 2.20.0</strong>(requirements.txt に意図した差分として明記済み)<br>
+・CLIP: <code>requirements.txt</code> には torch 系がまだ無い → 第7章の「Linux向け追記」を必ず適用<br>
+・USBカメラ: EC2 には刺さらない → <strong>IPカメラ(RTSP/MJPEG)または Pi 配信</strong>で運用(第12章・第3章)</div>
+</section>
+
+<!-- ================================================================ -->
+<section id="s2">
+<h2>2. アーキテクチャ概要</h2>
+<pre>
+ インターネット
+      │ 443(https)/ 80→301
+ ┌────▼───────────────────────────── VPC 10.0.0.0/16 (東京) ─────────────────────────┐
+ │  サブネット 10.0.1.0/24 (public)                                                   │
+ │  ┌──────────────────────────── EC2 t3.large ────────────────────────────────┐    │
+ │  │ nginx :443  TLS(ACM/certbot) + 静的(staticfiles) + プロキシ              │    │
+ │  │   └→ gunicorn :8000 (workers=1, threads=8)                               │    │
+ │  │        └→ Django(CARE SEC)                                               │    │
+ │  │             ├─ AI常駐スレッド(検知・録画・通知)← apps.py ready           │    │
+ │  │             ├─ SQLite  db.sqlite3        (EBS gp3 /opt/care-sec)         │    │
+ │  │             └─ media/(録画mp4・jpg)= <b>nginxからは直接配信しない</b>  ★     │    │
+ │  └───────────────────────────────────────────────────────────────────────────┘    │
+ │  Internet Gateway ── ルートテーブル 0.0.0.0/0→IGW                                  │
+ └────────────────────────────────────────────────────────────────────────────────────┘
+      ▲ RTSP/MJPEG(1.5〜3Mbps/台)
+ ┌────┴──────────┐   施設 LAN(ONU/ルータ配下)
+ │ Raspberry Pi  │   ※ Pi から AWS へ「外方向」配信にするのが一番簡単(第12章)
+ │ (カメラ中継)   │
+ └───────────────┘
+</pre>
+<p>★ = 第8章の「メディアログイン限定」で守る対象。ここが本ガイドの一番の要点です。</p>
+</section>
+
+<!-- ================================================================ -->
+<section id="s3">
+<h2>3. 移行パターン選定(重要・ここを先に決める)</h2>
+<table>
+  <tr><th></th><th>パターンA: 全部AWS(IPカメラ/Pi配信)</th><th>パターンB: ハイブリッド(エンジンは手元PC)</th></tr>
+  <tr><td>構成</td><td>カメラ映像を RTSP/MJPEG で EC2 が入力。Web・DB・AI全て EC2</td><td>USBカメラ+AI解析は開発機で継続、Web/DBだけ AWS。AIは API 経由でアラートを書き込む</td></tr>
+  <tr><td>良い点</td><td>1台で完結・停電時PC停止に依存しない・運用が単純。ai2 は IPカメラ対応済み(<code>Camera.stream_url</code>)</td><td>既存のカメラ環境をそのまま使える・帯域節約</td></tr>
+  <tr><td>弱点</td><td>回線断=全停止・帯域(台数×2〜3Mbps)が必要</td><td>AWS側の「ライブ画面」が使えない・DB二重化(同期)問題・手元PCが常に必要=<strong>クラウドの意味が減る</strong></td></tr>
+  <tr><td>判定</td><td class="ok">推奨(本ガイドはこの構成)</td><td>移行の過渡期だけ</td></tr>
+</table>
+<div class="callout"><strong>結論: パターンA。</strong>ai2 は既に IPカメラ(<code>network_sources()</code>: <code>rtsp://</code> / <code>http(s)://</code> MJPEG)を第一級対応しており、USB特有の対策(DSHOW順序・Frame Server・検知総当たり)はネットワークカメラでは問題になりません。Pi 配信基線は過去の作業で確立済みです。</div>
+</section>
+
+<!-- ================================================================ -->
+<section id="s4">
+<h2>4. ネットワーク: VPC・サブネット(AWS CLI版)</h2>
+<p>個人〜小施設規模なら<strong>VPC1個・publicサブネット1個・IGW1個</strong>が正解です。
+「VPC=難しいもの」ではなく<em>論理的内線電話網(自分専用の私的ネットワーク)</em>だと思っていると楽になります。</p>
+
+<h3>4.1 コンソールで作る場合(1回やれば覚える)</h3>
+<ol>
+  <li>VPCダッシュボード → <kbd class="kbd">VPCの作成</kbd> → <strong>「VPC、パブリックサブネット、インターネットゲートウェイ」</strong>プリセット
+      <ul><li>名前: <code>caresec-vpc</code> / IPv4 CIDR: <code>10.0.0.0/16</code> / サブネット1つ(<code>10.0.1.0/24</code>、AZ: ap-northeast-1a)</li>
+      <li>このプリセットは NATゲートウェイを作らない(=<span class="ok">NATの時間課金≈¥300/日を回避</span>)。単一公開サーバーでは不要</li></ul></li>
+  <li>EC2起動時に対象サブネット+自動割当パブリックIPを指定(第6章)</li>
+  <li>Elastic IP を1個確保しインスタンスに紐付け(再起動・再作成でIPが変わらないようにする)</li>
+</ol>
+
+<h3>4.2 CLIで作る場合</h3>
+<pre>
+# 前提: aws configure (IAMユーザー or SSO。ルートアカウントのアクセスキーは作らない)
+VPC_ID=$(aws ec2 create-vpc --cidr-block 10.0.0.0/16 \
+  --tag-specifications 'ResourceType=vpc,Tags=[{Key=Name,Value=caresec-vpc}]' \
+  --query Vpc.VpcId --output text)
+
+SUBNET_ID=$(aws ec2 create-subnet --vpc-id $VPC_ID \
+  --cidr-block 10.0.1.0/24 --availability-zone ap-northeast-1a \
+  --tag-specifications 'ResourceType=subnet,Tags=[{Key=Name,Value=caresec-public}]' \
+  --query Subnet.SubnetId --output text)
+
+IGW_ID=$(aws ec2 create-internet-gateway \
+  --tag-specifications 'ResourceType=internet-gateway,Tags=[{Key=Name,Value=caresec-igw}]' \
+  --query InternetGateway.InternetGatewayId --output text)
+aws ec2 attach-internet-gateway --vpc-id $VPC_ID --internet-gateway-id $IGW_ID
+
+# この VPC の「デフォルトルートテーブル」に 0.0.0.0/0→IGW を入れる(public化)
+RT_ID=$(aws ec2 describe-route-tables --filters Name=vpc-id,Values=$VPC_ID \
+  --query 'RouteTables[0].RouteTableId' --output text)
+aws ec2 create-route --route-table-id $RT_ID --destination-cidr-block 0.0.0.0/0 \
+  --gateway-id $IGW_ID
+# サブネットが自動でデフォルトRTに関連付くので追加作業なし(新規サブネットは自前関連付けが必要な場面あり)
+
+# Elastic IP
+EIP_ID=$(aws ec2 allocate-address --domain vpc \
+  --tag-specifications 'ResourceType=elastic-ip,Tags=[{Key=Name,Value=caresec-eip}]' \
+  --query AllocationId --output text)
+echo "VPC=$VPC_ID SUBNET=$SUBNET_ID IGW=$IGW_ID EIP=$EIP_ID"
+</pre>
+
+<h3>4.3 よくあるハマり(ネットワーク編)</h3>
+<table>
+  <tr><th>症状</th><th>真相</th><th>処方</th></tr>
+  <tr><td>インスタンスに ssh できない・タイムアウト</td><td class="bad">一番多いのは SG で 22 を自分のIPから開けていないこと</td><td>第5章のSGマトリクス。<code>aws ec2 describe-security-groups</code> で ingress を目視</td></tr>
+  <tr><td>curl して「接続リセット」は来るが開かない</td><td>SGは通ったが nginx/gunicorn が死んでいる(ネットワークのせいじゃない)</td><td>OS層で <code>sudo ss -ltnp</code> と journalctl で確認</td></tr>
+  <tr><td>サブネットを作ったら IGW ルートが消えた</td><td>新規サブネットは <strong>デフォルトRTに関連付かないと</strong> 0.0.0.0/0 を持たない</td><td><code>aws ec2 modify-route-table-association</code> / <code>associate-route-table</code></td></tr>
+  <tr><td>NATゲートウェイ料金が発生</td><td>プリセットを間違えて「VPC+public+private+NAT」を作った</td><td>単一サーバーに NAT は不要。作り直しが早い(<span class="warn">NAT≈¥300/日放置すると死</span>)</td></tr>
+  <tr><td>Domain名で access したら 403 DisallowedHost</td><td>Djangoの <code>ALLOWED_HOSTS</code> にドメイン未追加</td><td>env <code>CARE_SEC_ALLOWED_HOSTS=secure.example.or.jp</code>(設定済みの仕組みを使う)</td></tr>
+</table>
+</section>
+
+<!-- ================================================================ -->
+<section id="s5">
+<h2>5. ファイアウォール: セキュリティグループ(SG)・NACL・OS層</h2>
+<p>AWSの「ファイアウォール」の主役は<strong>セキュリティグループ=インスタンスに貼る許可リスト(stateful)</strong>です。
+stateful=「入り口を開けた通信の<em>戻り</em>は自動で通る」ので、出口ルールは基本全部許可のままで動きます。
+NACLは無状態のサブネット幅のフィルタで、単一構成なら<strong>デフォルトのまま触らない</strong>のが正解(触るとハマる)。</p>
+
+<h3>5.1 SG設計(CARE SEC用マトリクス)</h3>
+<table>
+  <tr><th>用途</th><th>タイプ</th><th>ポート</th><th>送信元</th><th>説明</th></tr>
+  <tr><td>Web公開</td><td>Ingress</td><td>TCP 443</td><td><code>0.0.0.0/0</code></td><td>唯一の一般公開窓口。HTTPSのみ</td></tr>
+  <tr><td>HTTP→HTTPS誘導</td><td>Ingress</td><td>TCP 80</td><td><code>0.0.0.0/0</code></td><td>nginxで301リダイレクトのみ。コンテンツは流さない</td></tr>
+  <tr><td>SSH</td><td>Ingress</td><td>TCP 22</td><td class="warn">施設/事務所のグローバルIP/32 のみ</td><td>固定IPが無い場合は都度更新、または Session Manager で22を開けない運用に(5.3)</td></tr>
+  <tr><td>カメラ映像取り込み</td><td>—</td><td>—</td><td>—</td><td class="ok">不要。Pi→EC2の「外方向」接続で受けるため、AWS側の Ingress は増えない(第12章)</td></tr>
+  <tr><td>出口</td><td>Egress</td><td>ALL</td><td><code>0.0.0.0/0</code></td><td>既定のまま。apt/pip/SMTP/HFモデルDLが必要</td></tr>
+</table>
+<div class="callout danger"><strong>絶対に開けないポート:</strong> <code>8000</code>(gunicorn)/<code>3306/5432</code>(将来のDB)/<code>8554</code> 等の RTSP を 0.0.0.0/0 にしない。gunicorn は 127.0.0.1 待ち受ければもう十分です(第7章)</div>
+
+<h3>5.2 作成コマンド</h3>
+<pre>
+SG_ID=$(aws ec2 create-security-group --group-name caresec-web \
+  --description "CARE SEC production" --vpc-id $VPC_ID \
+  --tag-specifications 'ResourceType=security-group,Tags=[{Key=Name,Value=caresec-web}]' \
+  --query GroupId --output text)
+
+aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 443  --cidr 0.0.0.0/0
+aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 80   --cidr 0.0.0.0/0
+aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 22   --cidr 203.0.113.55/32   # ←自分のIPに変えろ
+echo "SG=$SG_ID"
+
+# 送信元IPが変わったら(施設動的IP):
+aws ec2 revoke-security-group-ingress --group-id $SG_ID --protocol tcp --port 22 --cidr 203.0.113.55/32
+aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 22 --cidr <新IP>/32
+</pre>
+
+<h3>5.3 SSHポートも開けたくない場合(AWS Systems Manager)</h3>
+<ol>
+  <li>IAMでインスタンスロール <code>caresec-ec2</code> に <code>AmazonSSMManagedInstanceCore</code> を付与(第11章)</li>
+  <li>EC2にアタッチ → SGの 22 を<strong>閉じたまま</strong>、コンソールの「接続→Session Manager」でシェル进入</li>
+  <li>秘密情報は一切ポートにしない。監査ログ(CloudTrail)も残る</li>
+</ol>
+
+<h3>5.4 OS層の二重防火墙(深防御)</h3>
+<p>SGが効きすぎて「何もかも不通」になるときは、SGのせいにしたくなるが OS の ufw/iptables/fail2ban の場合もある。
+<strong>層を分けて考える</strong>: SG(クラウド) → ufw(ホスト) → アプリ許可(Djangoの権限)。
+管理を単純にするため、本ガイドでは ufw は<strong>ループバック+443/80/22 のみ許可</strong>の最小構成にし、
+「細かいことはSGでやる」と役割分担します。</p>
+<pre>
+sudo apt install -y ufw
+sudo ufw default deny incoming
+sudo ufw allow 22/tcp
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw logging low
+sudo ufw enable
+sudo ufw status verbose
+</pre>
+</section>
+
+<!-- ================================================================ -->
+<section id="s6">
+<h2>6. EC2インスタンス作成(Ubuntu 26.04 LTS / t3.large)</h2>
+
+<h3>6.1 選択項目チェックリスト</h3>
+<table>
+  <tr><th>項目</th><th>選択</th><th>備考</th></tr>
+  <tr><td>AMI</td><td><strong>Ubuntu Server 26.04 LTS (HVM)</strong>、アーキテクチャ <strong>64-bit (ARMではない) </strong></td><td>東京。ami-xxxx は <code>aws ec2 describe-images --owners 099.. --filters "Name=name,Values=ubuntu-logs/images/hvm-ssd/ubuntu-jammy*26.04*" --query 'sort_by(Images,&amp;CreationDate)[-1].ImageId'</code> で最新を取得(26.04の正式名は発行後の検索で確認)</td></tr>
+  <tr><td>インスタンスタイプ</td><td>t3.large</td><td>常時稼働なので<strong>予約(1年 無アップフロント)で約4割減</strong>を検討しても良い段階</td></tr>
+  <tr><td>ストレージ</td><td>gp3 <strong>40 GiB以上</strong>(+/opt)</td><td>録画1本≈150KB・30日自動削除で数万本でも数GB。+DB+モデルキャッシュ(torch/CLIP ~600MB)で40GB安全圏。EBSエンクリプション既定on</td></tr>
+  <tr><td>キーペア</td><td>新規 <code>caresec-key</code>(Ed25519選択可)</td><td>.pem は <code>chmod 400</code>。SSM運用にするなら不要</td></tr>
+  <tr><td>詳細設定(user data)</td><td>下のスクリプト</td><td>初回起動時に自動で環境を作る「下準備スクリプト」</td></tr>
+</table>
+
+<h3>6.2 user-data(起動時自動セットアップ)</h3>
+<pre>
+#!/bin/bash
+set -euxo pipefail
+export DEBIAN_FRONTEND=noninteractive
+
+# 時刻はJST(介護記録のタイムスタンプ命)
+timedatectl set-timezone Asia/Tokyo
+
+apt-get update
+apt-get -y upgrade
+apt-get -y install \
+  python3 python3-venv python3-pip git nginx \
+  build-essential libgl1 libglib2.0-0 ttf-wqy-zenhei \
+  unattended-upgrades fail2ban logrotate
+
+# スワップ4GB(t3.large 8GiB+AI。学習/モデルロードの瞬間ヒックリ防止)
+if [ ! -f /swapfile ]; then
+  fallocate -l 4G /swapfile &amp;&amp; chmod 600 /swapfile &amp;&amp; mkswap /swapfile &amp;&amp; swapon /swapfile
+  echo '/swapfile none swap sw 0 0' &gt;&gt; /etc/fstab
+fi
+sysctl vm.swappiness=10
+echo 'vm.swappiness=10' &gt; /etc/sysctl.d/99-caresec.conf
+
+# 自動セキュリティ更新
+cat &gt; /etc/apt/apt.conf.d/20auto-upgrades &lt;&lt;EOF
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+EOF
+
+mkdir -p /opt/care-sec
+useradd -r -m -s /usr/sbin/nologin caresec || true
+</pre>
+<div class="callout tip"><code>libgl1 libglib2.0-0</code> は OpenCV/MediaPipe が実機で要求するGUI系共有ライブラリです(requirements.txtのコメント済の通り)。「import cv2 で落ちる」対策の最初の一歩。</div>
+</section>
+
+<!-- ================================================================ -->
+<section id="s7">
+<h2>7. アプリ展開(Python・gunicorn・systemd)</h2>
+
+<h3>7.1 venv + パッケージ</h3>
+<pre>
+sudo -u caresec -H bash
+cd /opt/care-sec
+git clone &lt;あなたのprivate repo&gt; ai2 &amp;&amp; cd ai2      # GitHub private 推奨(コードに施設情報はないが念のため)
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -U pip
+
+# 基本は Linux 用 requirements
+pip install -r requirements.txt
+
+# ★CLIP検証官は requirements.txt にまだ無い → Linux版を追記導入(venv済の Windows と同機能)
+pip install --index-url https://download.pytorch.org/whl/cpu torch==2.15.0 torchvision==0.29.2
+pip install transformers==5.24.0
+
+# HuggingFace モデルを「展開時に」ダウンロードしておくと初回アラートが遅延しない
+python -c "from transformers import CLIPModel, CLIPProcessor; \
+CLIPModel.from_pretrained('openai/clip-vit-base-patch32'); \
+CLIPProcessor.from_pretrained('openai/clip-vit-base-patch32')"
+</pre>
+
+<h3>7.2 本番環境変数(秘匿ファイルで渡す)</h3>
+<pre>
+sudo tee /etc/care-sec.env &gt; /dev/null &lt;&lt;'EOF'
+CARE_SEC_DEBUG=0
+CARE_SEC_SECRET_KEY=【python3 -c "from django.core.management.utils import get_random_secret_key as g; print(g())" で生成】
+CARE_SEC_ALLOWED_HOSTS=secure.example.or.jp,10.0.1.20
+EOF
+sudo chown root:caresec /etc/care-sec.env
+sudo chmod 640 /etc/care-sec.env
+</pre>
+<p><code>settings.py</code> は既に <code>CARE_SEC_SECRET_KEY / CARE_SEC_DEBUG / CARE_SEC_ALLOWED_HOSTS</code> の環境変数対応済み。
+<strong>SECRET_KEYをコードに書かない</strong>を徹底できる。DEBUG=0 にすると静的ファイルは Django が出さなくなるので collectstatic + nginx 配信が必須になる(次)。</p>
+
+<h3>7.3 DB/静的ファイル初期化</h3>
+<pre>
+source /opt/care-sec/ai2/.venv/bin/activate
+cd /opt/care-sec/ai2
+python manage.py migrate
+python manage.py collectstatic --noinput        # STATIC_ROOT へ集約(nginxが直接配信)
+# 開発機から引き継ぐなら(任意): db.sqlite3 と media/ を scp で上げる
+# scp -i caresec-key.pem db.sqlite3 ubuntu@EC2:/opt/care-sec/ai2/
+sudo chown -R caresec:caresec /opt/care-sec/ai2/db.sqlite3 /opt/care-sec/ai2/media
+</pre>
+
+<h3>7.4 gunicorn systemdユニット(workers=1が生命線)</h3>
+<pre>
+sudo tee /etc/systemd/system/caresec.service &gt; /dev/null &lt;&lt;'EOF'
+[Unit]
+Description=CARE SEC (Django + AI engine)
+After=network-online.target
+
+[Service]
+User=caresec
+Group=www-data
+WorkingDirectory=/opt/care-sec/ai2
+EnvironmentFile=/etc/care-sec.env
+# workers=1 threads=8 — AI常駐スレッドはプロセス内に1つだけ。
+# 複数workerは二重検知ではなく「2番目以降がロックで寝る」だけ無駄が出る。
+ExecStart=/opt/care-sec/ai2/.venv/bin/gunicorn config.wsgi:application \
+  --bind 127.0.0.1:8000 --workers 1 --threads 8 \
+  --timeout 120 --graceful-timeout 30 --access-logfile - --error-logfile -
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+sudo systemctl daemon-reload
+sudo systemctl enable --now caresec
+sudo systemctl status caresec --no-pager
+# 起動ログに「AIモデルの準備が完了しました(~秒 / 転倒=3名)」と「常時稼働を開始しました: index [...]」が出ればAIも生きている
+sudo journalctl -u caresec -f | grep -E "RealtimeAI|Retrain|Traceback"
+</pre>
+<div class="callout danger"><strong>127.0.0.1 bind が重要。</strong>0.0.0.0:8000 で待ち受けると、SGで8000を閉じても OS の ufw を開けた瞬間に認証なしAPIが互联网に露出します。<em>入口は nginx(443)だけ</em>に一本化する。</div>
+
+<h3>7.5 Linux 用 requirements への恒久反映(要コミット)</h3>
+<p><code>requirements.txt</code>(Linux本番用)にも CLIP 3点セットを追記しておくと次回再展開が1コマンドになります:</p>
+<pre>
+# CLIPアラート検証官(2026-11-25 / Linux本番)
+# ※ +cpu はPyTorch公式CPU indexのみの提供
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.15.0+cpu
+torchvision==0.29.2+cpu
+transformers==5.24.0
+</pre>
+</section>
+
+<!-- ================================================================ -->
+<section id="s8">
+<h2>8. メディアパスを「ログインしているユーザーのみ」に表示する(本ガイドの核心)</h2>
+
+<h3>8.1 現状のままだと何が危険か</h3>
+<p>開発機の <code>runserver</code>(DEBUG=1)では <code>/media/…</code> を Django が素で配信していますが、本番 nginx で
+<code>location /media/ { root … }</code> と<em>静态配信</em>すると——</p>
+<div class="callout danger"><strong>URL を知っている誰でも、録画mp4(入居者の顔・裸体・居室)と検知スナップショットが見られます。</strong><br>
+・検索エンジンのキャッシュ / SMSで共有されたURL / ログに残った Referer … すべて漏洩経路。<br>
+・介護施設では「録画が見られるURL」=プライバシ侵害そのもの。認証なしの静的配信は不可。</div>
+
+<h3>8.2 方式の選択</h3>
+<table>
+  <tr><th>方式</th><th>仕組み</th><th>採用?</th></tr>
+  <tr><td>① Django が保護配信(FileResponse)</td><td>URLは <code>/media/…</code> のまま、nginxはプロキシのみ。Djangoのログイン判定→ファイル送信</td><td class="ok">採用(ai2 に追加・第8.3章)。録画は1本~数百KBの短尺なので十分軽い</td></tr>
+  <tr><td>② nginx X-Accel-Redirect</td><td>Djangoは認可だけ返し、ファイル転送は nginx 内部 location が担当(高速・Djangoを転送で生かささない)</td><td class="ok">規模拡大時に①から差し替え可(第8.5章)</td></tr>
+  <tr><td>③ S3 + Presigned URL</td><td>ファイルはS3、短期署名URLをDjangoが発行</td><td>将来の拡張。EBS十分なら当面不要</td></tr>
+  <tr><td>④ 基本認証(nginx auth_basic)で /media だけ二重ロック</td><td>Djangoログイン+別途パスワード</td><td>ログインが二重になりUX悪。保険としてなら可</td></tr>
+</table>
+
+<h3>8.3 ai2 側の追加コード(方式①・今すぐこれ)</h3>
+<p>新規ファイル <code>core/protected_media.py</code>:</p>
+<pre>
+# -*- coding: utf-8 -*-
+"""media/ 配下のファイルを『ログイン済みユーザーだけ』に配信する(view)
+
+開発の runserver(DEBUG=1)では Django が /media/ を素で配信してしまうため、
+本番の main ブロックの urlpatterns にこの view を差し込み、
+nginx は /media/ を静态配信せず Django(gunicorn)へプロキシする。
+"""
+import mimetypes
+import os
+from pathlib import Path
+
+from django.conf import settings
+from django.http import FileResponse, Http404
+from django.contrib.auth.decorators import login_required
+
+
+@login_required
+def protected_media(request, path):
+    root = Path(str(settings.MEDIA_ROOT)).resolve()
+    target = (root / path).resolve()
+    # パストラバーサル防御(/media/../../etc/passwd 等)
+    try:
+        target.relative_to(root)
+    except ValueError:
+        raise Http404("media 外を指定できません")
+    if not target.is_file():
+        raise Http404("ファイルが存在しません")
+
+    ctype, _ = mimetypes.guess_type(str(target))
+    response = FileResponse(
+        target.open("rb"),
+        content_type=ctype or "application/octet-stream",
+        # mp4 の範囲要求(Range)は FileResponse が素では対応しないため
+        # 短尺録画(数秒〜1分)で十分ならこのまま。「シーク多用」なら 8.5 の X-Accel へ
+    )
+    response["X-Frame-Options"] = "SAMEORIGIN"
+    response["Cache-Control"] = "private, max-age=300"   # ブラウザだけ短期キャッシュ
+    return response
+</pre>
+<p><code>config/urls.py</code> — 現状「開発用」で生やしている static() マウントを本番で閉じる:</p>
+<pre>
+# 現状(開発用・settings.DEBUG で無条件):
+#   urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+# 変更: DEBUG のときだけ static()、本番は保護viewで受ける
+from django.conf import settings
+from core import protected_media
+
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+else:
+    urlpatterns += [
+        re_path(r"^media/(?P&lt;path&gt;.+)$", protected_media.protected_media, name="protected_media"),
+    ]
+</pre>
+<p class="warn">※ <code>re_path</code> を <code>django.urls</code> から import 追加を忘れずに。URLの形(<code>/media/recordings/ai_fall_….mp4</code>)は <code>Recording.video_url</code> に保存済みの値とそのまま一致するので、既存レコード・テンプレ・DB移行は変更不要です。</p>
+
+<h3>8.4 nginx 設定(①方式 / 第9章のTLSと一体)</h3>
+<pre>
+server {
+    listen 80;
+    server_name secure.example.or.jp;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name secure.example.or.jp;
+    # 証明書は第9章
+    ssl_certificate     /etc/letsencrypt/live/secure.example.or.jp/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/secure.example.or.jp/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    # 静的(css/js)= 公開してよい。媒体は絶対ここに入れない
+    location /static/ {
+        alias /opt/care-sec/ai2/staticfiles/;
+        expires 7d;
+        access_log off;
+    }
+
+    # ★ media は静态配信しない。何も書かなければ以下のプロキシに流れ
+    #   Django(protected_media view)がログイン判定してから出す
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 120s;
+        client_max_body_size 50m;
+    }
+}
+</pre>
+<p><code>settings.py</code> に <code>SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")</code> を追加(nginxの <code>X-Forwarded-Proto</code> を信頼して https 扱いにする。ないとリダイレクトループや cookie secure の矛盾が起きる)</p>
+
+<h3>8.5 (任意・高性能版)X-Accel-Redirect に切り替える</h3>
+<pre>
+# nginx: /protected/ は internal(=外部URLとして絶対通さない)。実体はここ
+location /protected/ {
+    internal;
+    alias /opt/care-sec/ai2/media/;
+}
+
+# views(Django): 認可だけ判定し、転送は nginx に投げる
+def protected_media(request, path):
+    # (root内チェック・is_fileチェックは 8.3 と同じ)
+    response = HttpResponse(status=200)
+    response["X-Accel-Redirect"] = f"/protected/{path}"
+    response["Content-Type"] = mimetypes.guess_type(path)[0] or "application/octet-stream"
+    return response
+</pre>
+<p>これで「Djangoは関門だけ、太いパイプは nginx」になり、mp4のRange再生・大量視聴にも強くなります。</p>
+
+<h3>8.6 漏洩していないかの検証手順(必ず実施)</h3>
+<pre>
+# ① 認証なし=弾かれること
+curl -s -o /dev/null -w "%{http_code}\n" https://secure.example.or.jp/media/recordings/ai_fall_20261120-101045_cam3.mp4
+#   → 期望: 302(/accounts/login/ へ) または 403。 200 が返ったら設定ミス
+# ② ログイン Cookie を付けて=通ること
+curl -s -o /dev/null -w "%{http_code}\n" -b "sessionid=<ブラウザのcookie>" https://…/media/….mp4
+#   → 200
+# ③ パストラバーサル
+curl -s -o /dev/null -w "%{http_code}\n" "https://…/media/../db.sqlite3"     # → 400/404
+# ④ 念のため robots・キャッシュ検索: google.com で site:あなたのドメイン media を確認(出ていたら要無効化申請)
+</pre>
+<div class="callout tip">ai2側の既存画面(録画一覧・ダッシュボード)はテンプレが <code>rec.video_url</code> / <code>thumbnail_url</code> を <code>&lt;img src&gt; / &lt;video src&gt;</code> するだけで、<strong>同一origin・Cookie自動送信</strong>なので①②の変更だけでそのまま動きます。フロント側のコード変更は不要です。</div>
+</section>
+
+<!-- ================================================================ -->
+<section id="s9">
+<h2>9. HTTPS(証明書・TLS)</h2>
+<h3>9.1 2つの道</h3>
+<table>
+  <tr><th>方法</th><th>概要</th><th>向いている</th></tr>
+  <tr><td><strong>A. certbot(Let's Encrypt)</strong></td><td>インスタンス内で <code>apt install certbot python3-certbot-nginx</code> → <code>sudo certbot --nginx</code>。自動更新(timer同梱)</td><td class="ok">単一EC2の今。無料・10分で終わる</td></tr>
+  <tr><td>B. AWS ACM + ALB</td><td>ACMで証明書(東京リージョンで作れる)→ ALB に張る。ALBは ¥26/日 程度 + アイドル時課金なし… ではなく<strong>ALBは時間+データで月¥1,000〜</strong></td><td>台数が増える/ELBのヘルスチェック自動復旧が欲しい時</td></tr>
+  <tr><td>C. CloudFront + ACM</td><td>ACM証明書は CloudFront 経由のみ(us-east-1発行)</td><td>CDN/エッジキャッシュが要る頃。介護動画は<strong>配信元を絞りたい</strong>ので当面不要</td></tr>
+</table>
+<h3>9.2 certbot 手順(A採用)</h3>
+<pre>
+# Route53(or 施設DNS)で secure.example.or.jp の Aレコードを Elastic IP に向ける
+sudo apt install -y certbot python3-certbot-nginx
+sudo certbot --nginx -d secure.example.or.jp
+sudo systemctl reload nginx
+# 更新確認(実際更新は timer):
+sudo certbot renew --dry-run
+</pre>
+<p>domain名が決まったら <code>CARE_SEC_ALLOWED_HOSTS</code> と、必要なら Django の
+<code>CSRF_TRUSTED_ORIGINS = ["https://secure.example.or.jp"]</code> を環境変数かsettingsで追加。</p>
+</section>
+
+<!-- ================================================================ -->
+<section id="s10">
+<h2>10. バックアップと復旧(プライバシデータは「消せない」より「漏らさない・失わない」)</h2>
+<h3>10.1 3段構え</h3>
+<table>
+  <tr><th>層</th><th>対象</th><th>手段</th><th>頻度/保持</th></tr>
+  <tr><td>1. ブロック</td><td>EBS全体(db+media+アプリ)</td><td>EBSスナップショット(DLM 自動)</td><td>日次1本、14日保持</td></tr>
+  <tr><td>2. 論理</td><td>SQLite(施設記録・アカウント)</td><td>cron で <code>sqlite3 db.sqlite3 ".backup …"</code> + gzip→ 別ディレクトリ(週次でS3非公開bucket or 別AWSアカウントへ)</td><td>日次、30日</td></tr>
+  <tr><td>3. リモート</td><td>上記を施設外へ</td><td>AWS Backup or rsync-over-ssh で別リージョン/自宅NAS</td><td>週次</td></tr>
+</table>
+<pre>
+# DLM(Data Lifecycle Manager)のポリシー例: 毎日 3:00JST、14日
+aws dlm create-lifecycle-policy --region ap-northeast-1 \
+  --description "caresec daily EBS snapshots" \
+  --state ENABLED --execution-role-arn arn:aws:iam::<acct>:role/service-role/AWSDataLifecycleManagerDefaultRole \
+  --policy-content file://dlm-caresec.json
+# dlm-caresec.json: Targets=TagBased(db-volume)、Schedules=Daily_3am_Retention14、CrossRegionは必要なら追加
+</pre>
+<h3>10.2 復旧手順(実演しておくこと)</h3>
+<ol>
+  <li>スナップショットからボリューム作成 → <code>aws ec2 attach-volume</code> → <code>mount /dev/xvdf /opt/care-sec</code></li>
+  <li><code>systemctl restart caresec</code> → <code>curl -s localhost/health</code>→<code>journalctl -u caresec</code>でAI起動確認</li>
+  <li>論理バックアップのみからの復旧: <code>cp db.sqlite3.bak db.sqlite3</code>(停止中に行う)+ media tar 展開</li>
+</ol>
+<p><strong>復旧演练は本番移行前に1回必ずやる</strong>(バックアップは「戻せることを確認するまでバックアップではない」)。</p>
+</section>
+
+<!-- ================================================================ -->
+<section id="s11">
+<h2>11. 監視と運用</h2>
+<h3>11.1 死活監視</h3>
+<ul>
+  <li>ai2 に <code>/health</code> は現在<strong>無い(404)</strong>(開発時ログで確認ずみ)。追加を推奨:</li>
+</ul>
+<pre>
+# config/urls.py に 2 行
+from django.http import JsonResponse
+urlpatterns += [path("health/", lambda r: JsonResponse({"ok": True}))]
+# ※ 中身は出さない(情報漏洩防止)。ALB/CloudWatchのHTTPチェック用
+</pre>
+<ul>
+  <li>CloudWatch エージェントをインストールし <code>cpu, mem, disk, swap</code> をメトリクス化 →
+      アラーム: メモリ &gt;85% 10分 / ディスク &gt;80% / /health 不通5分 → SNS(メール/ LINE Webhook は Lambda 経由)</li>
+  <li>AIエンジンの死活はアプリログ: journald へ出る <code>[RealtimeAI] …解析稼働中(fps=…)</code> が証言。
+      5分以内に稼働ログが無ければ異常、として CloudWatch Logs メトリクスフィルタにできる</li>
+</ul>
+<h3>11.2 日常コマンド</h3>
+<pre>
+sudo journalctl -u caresec -f                 # アプリ+AIのライブログ
+sudo systemctl restart caresec                # デプロイ後の再起動(AIモデル再ロード~15-20秒)
+source /opt/care-sec/ai2/.venv/bin/activate &amp;&amp; cd /opt/care-sec/ai2
+python manage.py migrate                      # デプロイごと
+sudo tail -f /var/log/nginx/access.log        # media アクセス監査(誰が見たか)
+sudo fail2ban-client status sshd              # SSHブルートフォース遮断状況
+</pre>
+<h3>11.3 更新・IAM</h3>
+<ul>
+  <li>インスタンスロール <code>caresec-ec2</code>: <code>AmazonSSMManagedInstanceCore</code> + (CloudWatch Agent使うなら <code>CloudWatchAgentServerPolicy</code>、S3 offload するなら対象bucket限定の <code>s3:Get/Put</code>)。<strong>長期アクセスキーは誰のPCにも作らない</strong></li>
+  <li>OS Update: <code>sudo unattended-upgrade -d</code> 自動。カーネル再起動は月1回メンテナンス窓で(<code>needs-restarting -r</code>)</li>
+</ul>
+</section>
+
+<!-- ================================================================ -->
+<section id="s12">
+<h2>12. カメラ接続(Pi / IPカメラ → AWS)</h2>
+<p>USBカメラはクラウドに刺せないので、カメラ入力<em>全て</em>をネットワークカメラ化する。ai2 は本機能対応済み
+(<code>Camera.stream_url</code> に <code>rtsp://</code> / <code>http(s)://…mjpeg…</code> を入れるだけ)。</p>
+<h3>12.1 2つの接続形</h3>
+<table>
+  <tr><th>形</th><th>流れ</th><th>AWS側SG</th><th>備考</th></tr>
+  <tr><td>Pull(EC2→Pi)</td><td>EC2が <code>rtsp://192.168.x.x:8554</code> を開く</td><td class="bad">要ハブ: Pi側を公网に開くのは論外。Site-to-Site VPN or DS が必要</td><td>施設グローバルIP固定なら可だが運用重い</td></tr>
+  <tr><td class="ok"><strong>Push(Pi→EC2)</strong>推奨</td><td>Pi が RTMP/WebSocket/HTTPストリームをEC2へ<strong>外向き</strong>で送り続ける。ai2は「IP配信済みカメラ」を <code>http(s)://</code> で取れる</td><td class="ok">443/80だけ=既存SGのまま</td><td>既存「Pi配信」資産がそのまま使える。帯域は1.5〜3Mbps/台</td></tr>
+</table>
+<h3>12.2 帯域・レイテンシ予算(設計基準)</h3>
+<pre>
+台数        受信帯域(640x480@MJPEG相当)   想定CPU(解析)
+2台   →  4〜6 Mbps           t3.large で余る(間引きpose≈5/s/台)
+4台   →  8〜12 Mbps          pose 2〜3/s/台に落ちる→ t3.xlarge か AI分割
+8台   →  20+ Mbps           単一t3.largeは不可。AI専用機分離(第3章Bの応用)
+</pre>
+<p>施設回線はアップロード側(Pi→AWSは施設の下りではなく<em>上り</em>)。光電話セットの「1Gbps」は下り話で、上りは 100〜200Mbps あるが、IPv4過剰共有(OCN等)は<em>上りが弱い</em>ので実測(iperf3)してから台数を積み増すこと。</p>
+
+<h3>12.3 別解: Tailscale で「同一ネットワーク」にして Pull 型を安全に使う</h3>
+<p>第12.1表の Pull(EC2→Pi)は「Piを公网に開けないと無理」と書いたが、<strong>Tailscale(WireGuardベースのメッシュVPN)</strong>で
+EC2とPiと事務所PCを<em>同じ仮想的なLAN(100.64.0.0/10)</em>にすると、この制約が消える。</p>
+<pre>
+ 施設LAN                     AWS VPC
+ ┌─────────┐  Tailscale   ┌──────────────┐
+ │ Pi(100. │◄══メッシュ══►│ EC2(100.64.  │
+ │ 64.1.2) │  自動NAT通過 │ 2.3)+事務所PC │
+ └─────────┘  (hole punch)└──────────────┘
+   EC2から rtsp://100.64.1.2:8554 を「LAN内のカメラ」として開ける
+   施設側: グローバルIP不要・ポートフォワード不要・CGNAA(OCN等)でも大体OK
+</pre>
+<table>
+  <tr><th>観点</th><th>Push型(第12.1・既定)</th><th class="ok">Tailscale Pull型</th></tr>
+  <tr><td>設定の手軽さ</td><td>Piに配信仕込み済みなら最速(ai2既存機能のみ)</td><td>EC2/Pi各に<code>tailscale up</code>のみ。<strong>ルータ設定ゼロ</strong>は施設運用で大きい</td></tr>
+  <tr><td>AWS SG/公開面</td><td>443/80(既存)</td><td>443/80のまま+<strong>22を閉じたままSSH可能</strong>(SGを100.64.0.0/10に絞れる)。公開窓口が減るのはセキュリティ上むしろ◎</td></tr>
+  <tr><td>帯域リスク</td><td>施設の<em>上り</em>を常に使う</td><td>UDP hole punch成功なら同じ。失敗して<strong>DERP中継に落ちた時だけ</strong>映像がカクつく/無料枠の中継スループット制限が効く(実測必須)</td></tr>
+  <tr><td>依存・障害点</td><td>なし</td><td>Tailscaleのコントロールプレーン(鍵認証)。既存の直結セッションは暫く維持されるが、全経路DERP経由環境では影響大</td></tr>
+  <tr><td>料金</td><td>¥0</td><td>Personal Free(3ユーザー/100デバイス)で今回の規模はほぼ足る。事業運用なら Pro($6/user/月 目安)を推奨=<strong>経理に説明可能な構成にする</strong></td></tr>
+  <tr><td>プライバシ</td><td>映像はAWSまで自前TLS/RTSP</td><td>メッシュ内はWireGuard暗号だが、中継(DERP)が通ると<strong>映像バイトがサードパーティAWSリージョンを通過し得る</strong>。介護映像なので契約・ plans を事前に精読(自前headscaleで回避可)</td></tr>
+</table>
+<h4>導入手順(両端で計5分)</h4>
+<pre>
+# EC2(Ubuntu 26.04)
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up --ssh          # ブラウザで承認。--ssh で Tailscale SSH(鍵配布不要)
+tailscale ip -4                  # → 100.64.x.x を控える
+
+# 各 Pi
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up --authkey tskey-…   # 施設分を無人承認(スクリプト展開向き)
+
+# SG: Tailscaleの直結通信のために UDP 41641 を inbound(送信元 0.0.0.0/0 で可:
+#     WireGuard鍵で認証されるので「ポートが開く」の意味は通常と違う)
+aws ec2 authorize-security-group-ingress --group-id $SG_ID \
+  --protocol udp --port 41641 --cidr 0.0.0.0/0
+
+# ai2 カメラスケジュール: stream_url を LAN address のまま書ける
+#   rtsp://100.64.1.2:8554/ch0   ← Piのtailscale IP
+#   ※ 施設内LAN IP(192.168.x.x)をそのまま使いたい場合は Pi側サブネットで
+#     VPC Peering/Site-to-Site VPN が正解。Tailscale は 100.64/10 名義で統一する
+</pre>
+<div class="callout"><strong>結論:</strong>「簡単か?」→ <em>初期設定は Tailscale の方が楽</em>(ルータ設定がゼロで、22まで閉じられる)。
+ただし<strong>常時映像の主経路としては Push 型を第一候補</strong>に置き、
+①Pull型がやりたい / ②SSH公開ポートを消したい / ③複数拠点を1画面に集約したい、のどれかに当たったら Tailscale を採用するのがうまい使い方。
+ai2 側は IPカメラの URL を変えるだけなので<strong>後から切り替え自由</strong>(まずPushで始めて、運用が見えてから Pull+Tailscale に寄せる移行も可)。</div>
+</section>
+
+<!-- ================================================================ -->
+<section id="s13">
+<h2>13. コスト目安(東京・2026年11月時点の概算)</h2>
+<table>
+  <tr><th>項目</th><th>仕様</th><th>月額目安</th></tr>
+  <tr><td>EC2 t3.large</td><td>オンデマンド 時間≈¥0.17〜0.20</td><td>約 ¥12,000〜14,000(常時稼働)</td></tr>
+  <tr><td>EBS gp3</td><td>40GB + スナップショット ~100GB</td><td>約 ¥450 + ¥12</td></tr>
+  <tr><td>Elastic IP</td><td>稼働中に紐付け=無料</td><td>¥0(未紐付け放置は課金)</td></tr>
+  <tr><td>データ転送</td><td>受信=無料、送信は 10GBまで無料、以降 ~¥9/GB。配信が主ならほぼ送信なし</td><td>数百円〜</td></tr>
+  <tr><td>ドメイン + Route53</td><td></td><td>¥100〜/月 + 取得費</td></tr>
+  <tr><td>CloudWatch/Backup/SNS</td><td>基本メトリクス+スナップショット程度</td><td>数百円〜</td></tr>
+  <tr><td class="warn">地雷</td><td colspan="2">NATゲートウェイ(誤作成≈¥9,000/月)/ CloudFront(誤設定で転送)/ S3クロスリージョンレプリケーション。<strong>使わないものは作らない・作った物はタグで棚卸し</strong></td></tr>
+  <tr><td><strong>合計</strong></td><td></td><td><strong>約 ¥13,000〜16,000/月</strong>(1年プランで EC2 分 ~4割減)</td></tr>
+</table>
+</section>
+
+<!-- ================================================================ -->
+<section id="s14">
+<h2>14. 移行チェックリスト(この順でやれば止まらない)</h2>
+<ul class="check">
+  <li><label><input type="checkbox"> [AWS] VPC/サブネット/IGW/EIP作成(第4章)</label></li>
+  <li><label><input type="checkbox"> [AWS] SG: 443/80公開・22は自分のIP・8000等は閉じる(第5章)</label></li>
+  <li><label><input type="checkbox"> [AWS] EC2: Ubuntu 26.04 LTS・t3.large・gp3 40G・user-data投入(第6章)</label></li>
+  <li><label><input type="checkbox"> [EC2] ufw+fail2ban 有効化、JST、スワップ確認(<code>free -h</code>)</label></li>
+  <li><label><input type="checkbox"> [EC2] repo clone → venv → requirements.txt + torch系(CLIP)(第7章)</label></li>
+  <li><label><input type="checkbox"> [EC2] CLIPモデルを事前DL(cache)→ 展開時間短縮</label></li>
+  <li><label><input type="checkbox"> [EC2] <code>/etc/care-sec.env</code> に SECRET_KEY/DEBUG=0/ALLOWED_HOSTS</label></li>
+  <li><label><input type="checkbox"> [ai2] <code>protected_media</code> view + urls切替をコミット(第8章)</label></li>
+  <li><label><input type="checkbox"> [ai2] <code>SECURE_PROXY_SSL_HEADER</code> / CSRF_TRUSTED_ORIGINS 追加</label></li>
+  <li><label><input type="checkbox"> [EC2] gunicorn(workers=1 threads=8, 127.0.0.1 bind)+systemd、nginx 設定・reload</label></li>
+  <li><label><input type="checkbox"> [AWS] Route53 Aレコード → EIP、certbot TLS 取得・自動更新確認</label></li>
+  <li><label><input type="checkbox"> [移行] db.sqlite3 + media/ を scp → chown → migrate → collectstatic</label></li>
+  <li><label><input type="checkbox"> [検証] <strong>未ログインで /media 動画が 302/403</strong>・ログインで 200・パストラバーサル 403(第8.6)</label></li>
+  <li><label><input type="checkbox"> [検証] カメラ台帳に stream_url 設定 → /debug/camera/ で初フレーム & AI「転倒=3名」ログ</label></li>
+  <li><label><input type="checkbox"> [任意] Pull型/SSH秘匿を選ぶなら Tailscale 導入(第12.3)。デフォルトは Push 型で OK</label></li>
+  <li><label><input type="checkbox"> [検証] 実検知1件+自動録画1件→30日自動削除が効くこと(retentionログ)</label></li>
+  <li><label><input type="checkbox"> [バックアップ] DLM 日次 + sqlite .backup cron + <strong>復旧リハーサル1回</strong>(第10章)</label></li>
+  <li><label><input type="checkbox"> [監視] /health 追加 + CloudWatch アラーム(メモリ85%/ディスク80%/health不通)</label></li>
+  <li><label><input type="checkbox"> [締め] IAMルートMFA・請求アラート(Budget ¥20,000)・使わないリソース削除・タグ付与</label></li>
+</ul>
+</section>
+
+<!-- ================================================================ -->
+<section id="s15">
+<h2>15. トラブルシューティング</h2>
+<table>
+  <tr><th>症状</th><th>切り分け順序</th><th>大抵の原因</th></tr>
+  <tr><td>ブラウザが「接続済み」のまま応答なし(timeout)</td><td>SG→ufw→サービス</td><td class="ok">SGで443開いてない。<code>nc -vz host 443</code> で確認</td></tr>
+  <tr><td>接続拒否(reset)が即返る</td><td>サービス層</td><td>nginx/gunicorn が死んでいる。<code>systemctl status caresec nginx</code></td></tr>
+  <tr><td>502 Bad Gateway</td><td>gunicorn</td><td><code>journalctl -u caresec</code> に import 失敗(venvパス/モジュール不足)。torch未導入→CLIPは fail-open で止まらないはず。止まったら設定見直し</td></tr>
+  <tr><td>403 DisallowedHost(Djangoエラーページ)</td><td>Django</td><td>ALLOWED_HOSTS(env)にドメント未追加</td></tr>
+  <tr><td>https で無限リダイレクト</td><td>nginx↔Django</td><td><code>SECURE_PROXY_SSL_HEADER</code> 未設定 or X-Forwarded-Proto ヘッダ渡し忘れ</td></tr>
+  <tr><td>CSS/JSだけ404(画像は出る)</td><td>nginx</td><td>collectstatic 未実行 / alias先 staticfiles の owner 読み取り不可</td></tr>
+  <tr><td>アラートは出るが<strong>カメラ映像が止まる/再接続連発</strong></td><td>カメラ側</td><td>RTSPセッション切れ=帯域不足 or Pi の WiFi 強度。有線化、<code>AI_RECONNECT_*</code> 設定確認。ai2の再接続は短打連発防止済み</td></tr>
+  <tr><td>AIが動いていない(転倒=…ログが無い)</td><td>gunicorn</td><td class="ok">workersを複数にした/ <code>EnvironmentFile</code> のDEBUG残留でAI常駐が走らない等。<code>ss -ltnp</code> とjournalctl で1プロセス確認</td></tr>
+  <tr><td>録画ファイルが 404(本番のみ)</td><td>media配信方式</td><td>第8章の urls 切替未適用(DEBUG=1 の開発機でしか動かない状態)。protected_media が入れば解決</td></tr>
+  <tr><td>メディアがまだ誰でも見える!!</td><td>即断</td><td>nginx に <code>location /media/</code> 静态配信が残っている→削除して reload、第8.6 curl を再走</td></tr>
+</table>
+</section>
+
+<footer>
+CARE SEC (ai2) AWSセットアップガイド v1.0 — 作成: 2026-11-25 · 対象: Django 6.1.2 / TF 2.20(Linux) / CLIP検証官あり / t3.large · Ubuntu 26.04 LTS<br>
+価格・AMI・バージョンは2026年11月時点の目安です。実施時に AWS 側の最新確認を。
+</footer>
+</main>
+</body>
+</html>
