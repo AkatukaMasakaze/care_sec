@@ -137,6 +137,27 @@ class CoreConfig(AppConfig):
         atexit.register(_release)
         return True
 
+    @staticmethod
+    def _is_wsgi_server_process():
+        """gunicorn/uwsgi 等の本番WSGIサーバーで走っているか
+
+        _is_runserver_worker() の RUN_MAIN/--noreload は runserver 専用トークンで、
+        gunicorn では永久にFalseだった(2026-11-26 本番でAI不动作として顕在化)。
+        manage.py test/migrate/collectstatic では gunicorn は import されないため、
+        ここは素通りする=従来どおりコマンド実行にAI起動は付随しない。
+        workers>1 の場合は _claim_ai_lock が勝者を1つに絞る(設計どおり)。
+        """
+        import sys
+
+        if "gunicorn" in sys.modules:
+            return True
+        try:
+            import uwsgi  # noqa: F401
+
+            return True
+        except ImportError:
+            return False
+
     def ready(self):
         """アプリ起動時に 自動再学習 / リアルタイムAI常時稼働 を開始する
 
@@ -148,7 +169,7 @@ class CoreConfig(AppConfig):
         from django.conf import settings
 
         # ---- リアルタイムAI解析の常時稼働(/debug/camera/ を離れても解析を続ける) ----
-        if not self._is_runserver_worker():
+        if not (self._is_runserver_worker() or self._is_wsgi_server_process()):
             return
 
         if not getattr(settings, "AI_REALTIME_ENABLED", True):

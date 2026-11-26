@@ -76,7 +76,12 @@ paths:
       user: careserve
       passwords: [\"$PWREAD\"]
 EOF"
-echo "include: [ mediamtx-paths.yml ]" | sudo tee -a /etc/mediamtx/mediamtx.yml >/dev/null
+
+# ★注意: MediaMTX に include 構文は無い(v1.21.4実測: ERR json: unknown field "include")。
+#   dump-config の paths: 以降を置き換える形でマージする(paths はyml末尾セクション)
+sudo sed -i '/^paths:/,$d' /etc/mediamtx/mediamtx.yml
+sudo sed -i '/^include:/d' /etc/mediamtx/mediamtx.yml   # 旧include行がある環境の掃除
+sudo cat /etc/mediamtx/mediamtx-paths.yml >> /etc/mediamtx/mediamtx.yml
 ```
 
 ### 1.2 systemd常駐
@@ -152,9 +157,89 @@ ExecStart=/usr/bin/rpicam-vid -t 0 --width 640 --height 480 --fps 10 --codec h26
 - hole punch 失敗時は DERP 中継で動く(映像は流れるが遅延増)。無料Personal枠で台数3ユーザー程度ならまず問題なし
 - 将来「Pull型(EC2がPiのRTSPを開く)」に切り替えたくなっても、このtailnetのまま `rtsp://100.64.y.y:8554/…` でいける
 
+## 1.6 パターンW: プレーンWireGuard(第三者ゼロ・無料・EIPがあるから成立)
+
+Tailscaleと同じWireGuardを、鍵の配布だけ手作業で使う版。EC2が静的EIPを持つため
+中継サーバーが不要で、Piの動的IPはWireGuardのroamingが自動追従する。
+
+### W-1. EC2側 〔ubuntu帽子〕
+```bash
+sudo apt install -y wireguard-tools
+
+# サーバー鍵ペア生成
+sudo wg genkey | sudo tee /etc/wireguard/server.key | sudo wg pubkey | sudo tee /etc/wireguard/server.pub
+sudo chmod 600 /etc/wireguard/server.key
+
+# Pi側の公開鍵をここで用意する(W-2で出てくる pi.pub を貼る)
+PI_PUB=【W-2で作るPiの公開鍵】
+sudo bash -c "cat > /etc/wireguard/wg0.conf <<EOF
+[Interface]
+PrivateKey = $(sudo cat /etc/wireguard/server.key)
+Address = 10.8.0.1/24
+ListenPort = 51820
+
+[Peer]
+PublicKey = $PI_PUB
+AllowedIPs = 10.8.0.2/32
+EOF"
+sudo chmod 600 /etc/wireguard/wg0.conf
+
+# IP転送は不要(EC2自身が終点で、MediaMTXはローカルで受ける)。起動:
+sudo systemctl enable --now wg-quick@wg0
+sudo wg show                      # peer 0 handshake… と出る
+ip a show wg0 | grep 10.8.0.1     # 仮想NIC確認
+```
+
+**SG**: `UDP 51820 ← 0.0.0.0/0` を1行追加(WireGuard鍵認証済みのハンドシェイクだけが通る)。
+既存の `8554/tcp ← 施設IP/32` は**不要なので削除**(トンネル内を通るので公网に晒さない)。
+
+### W-2. Pi3側
+```bash
+sudo apt install -y wireguard-tools
+
+sudo wg genkey | sudo tee /etc/wireguard/pi.key | sudo wg pubkey | sudo tee /etc/wireguard/pi.pub
+sudo chmod 600 /etc/wireguard/pi.key
+cat /etc/wireguard/pi.pub        # ← これをW-1の PI_PUB に貼る(相互に交換する2枚の鍵)
+
+sudo bash -c "cat > /etc/wireguard/wg0.conf <<EOF
+[Interface]
+PrivateKey = $(sudo cat /etc/wireguard/pi.key)
+Address = 10.8.0.2/24
+
+[Peer]
+PublicKey = 【W-1の server.pub の中身】
+Endpoint = 54.172.181.162:51820
+AllowedIPs = 10.8.0.1/32
+PersistentKeepalive = 25
+EOF"
+sudo chmod 600 /etc/wireguard/wg0.conf
+
+sudo systemctl enable --now wg-quick@wg0
+ping -c 3 10.8.0.1               # 通ればトンネル完成
+```
+
+### W-3. cam-push の宛先だけ差し替え
+```
+ExecStart=/usr/bin/rpicam-vid -t 0 --width 640 --height 480 --fps 10 --codec h264 --inline \
+  -o rtsp://carecam:【PW1】@10.8.0.1:8554/cam1
+sudo systemctl restart cam-push
+```
+MediaMTXのログに publisher `10.8.0.2` が出れば、以降はパターンS/Tと完全に同一(ai2台帳は不変)。
+
+### Wの運用メモ
+| 項目 | 内容 |
+|---|---|
+| 鍵の追加/剥奪 | EC2の wg0.conf に `[Peer]` を追記/削除して `sudo systemctl restart wg-quick@wg0`。剥奪=即切断(台帳管理は自分持ち。Tailscaleの楽さとのトレードオフ) |
+| 動的IP追従 | PiのIPが変わっても次の送信で自動復帰(電話をかける側なので)。WiFi断も `Restart=always` と合わせ自己回復 |
+| 中身/メタデータ | 第三者のサーバーが存在しない。通信はEC2とPiの間だけ |
+| 検証 | `sudo wg show` の latest handshake が1分以内で更新され続けていること |
+
 ---
 
 ## 2. Pi3: 送信サービスを入れる 〔piユーザー〕
+
+---
+
 
 OS 12(Bookworm)前提。11以下は末尾の代替行へ差し替え。
 

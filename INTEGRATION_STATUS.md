@@ -2491,3 +2491,17 @@ ai2_watchdog.log 末尾を参照。
   自動削除しました(実ファイル 2件削除)" を実出力で確認
 - 稼働中サーバー反映後: 録画1件(11/20)=「残り26日」バッジ表示、両カメラ 26.6/26.9fps 継続 ✓
 - ※ tests.py 追記時に既存クラスの途中へ挿す事故が発生→末尾へ移動し直して全緑確認済
+
+### 49-補足3(2026-11-26 AWS本番): gunicornでAI起動スレッドが走らなかった
+症状: EC2本番で caresec.service(active)・Web/ログイン/メディア保護は全正常なのに
+journalctl に [RealtimeAI] が一行も出ず、カメラ台帳(cam:1)も解析されない。
+原因: apps.ready() のゲート `_is_runserver_worker()` が RUN_MAIN/--noreload という
+**runserver専用トークン**しか見ず、gunicorn では永久Falseだった。
+修正: `_is_wsgi_server_process()` を追加(sys.modules に gunicorn / import uwsgi で
+判定)し、`ready()` を `runserver worker OR WSGIサーバー` のゲートに。
+manage.py test/migrate/collectstatic ではgunicorn未importなので従来どおりAIは付随しない。
+workers>1 でも _claim_ai_lock が勝者を1つに絞る(既存設計)。テスト32件OK。
+ついで: MediaMTX に include 構文は無い(v1.21.4実測 ERR json: unknown field)→ paths は
+yml本体へマージ(CAMERA_PIPELINE_SETUP.md 修正済)。Pi側は既存の pi-cam1(8080/stream,
+libcamera MJPEG)・pi-cam2(8081 uStreamer)を WireGuard トンネル(10.8.0.2)越しに pull する
+構成で確定。施設IP動的でもトンネルが追従するため 8554 公開は不要だった。
