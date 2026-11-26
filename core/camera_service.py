@@ -454,6 +454,24 @@ def _name_device(info):
 _probe_state = {}     # index -> {"at": monotonic, "kind": "fail"/"timeout"}
 _probe_threads = {}   # index -> 実行中のプローブスレッド
 _probe_lock = threading.Lock()
+# エンジンのacquireが「今このindexを開いている」印。検知プローブと同じindexを
+# 二重openすると Windows では DSHOW交渉が両方失敗し、MSMFへ回ったプローブが
+# 60〜90秒ハングして**ゾンビスレッドがデバイスを掴み続ける**(2026-11-26実測:
+# 以後すべてのopenが「他のデバイスが使用中」で死に、サーバー再起動まで復旧しない)。
+# 対称に抑止する: プローブ中はacquireを見送り、acquire中はプローブを見送る。
+_opening = set()
+_opening_lock = threading.Lock()
+
+
+def probe_running(index):
+    """そのindexの検知プローブが今走っているか(ハング中なら True が続く)"""
+    try:
+        key = int(index)
+    except (TypeError, ValueError):
+        return False
+    with _probe_lock:
+        thread = _probe_threads.get(key)
+    return thread is not None and thread.is_alive()
 
 
 def _probe_retry_seconds():
@@ -497,6 +515,11 @@ def _probe_with_budget(index, cv2, budget=6.0):
         state = _probe_state.get(index)
         if state is not None and time.monotonic() - state["at"] < _probe_retry_seconds():
             return "cached_fail"
+    with _opening_lock:
+        if index in _opening:
+            # エンジンのacquireがちょうどこのindexを開いている。二重open回避のため
+            # 今回の検知では触らない(in_progress扱いで一覧には既存情報を維持)
+            return "in_progress"
 
     box = {}
 
@@ -1044,7 +1067,17 @@ def acquire(index):
     # MSMF で映像を返さないカメラも別バックエンドで取れるため総当たりする(ロック外)。
     # 配信開始の待ち合わせは長めにし、2台目(帯域が遅いカメラ)も起動できるようにする。
     patience = float(getattr(settings, "AI_CAMERA_OPEN_SECONDS", 10.0))
-    cap, backend_name, frame = _open_capture(cv2, index, first_frame_seconds=patience, compressed=True)
+    # 検知プローブが同じindexを掴んでいる間は待つ(ハング中は次サイクルへ)。
+    # 二重openは Windows で両者失敗→MSMFゾンビ化の連鎖になる(2026-11-26実測)
+    if probe_running(index):
+        return False
+    with _opening_lock:
+        _opening.add(index)
+    try:
+        cap, backend_name, frame = _open_capture(cv2, index, first_frame_seconds=patience, compressed=True)
+    finally:
+        with _opening_lock:
+            _opening.discard(index)
     if cap is None:
         return False
     # 実際に決まった形式をサーバーのログに出す(MJPG になったかをここで確認する)

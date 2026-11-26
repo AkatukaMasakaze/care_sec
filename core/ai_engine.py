@@ -1914,6 +1914,11 @@ class RealtimeAIEngine:
                 return True
         # カメラキャプチャをエンジン側で常時確保する
         # (ブラウザの「停止」で camera_service.release が呼ばれても参照カウントで残る)
+        if not isinstance(device, str) and camera_service.probe_running(device):
+            # 検知プローブ(ハング含む)が終わるまで見送る。次30秒サイクルで再試行
+            if verbose:
+                print(f"[RealtimeAI:{device}] 検知プローブ中のため確保を次サイクルで見送ります")
+            return False
         began = time.monotonic()
         readiness.camera_step(device, 10, "opening", "%s を開いています…" % _label(device))
         if not camera_service.acquire(device):

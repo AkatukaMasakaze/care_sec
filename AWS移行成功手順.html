@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CARE SEC AWS移行 成功手順(2026-11-25/26 実走記録)</title>
+<style>
+  :root { --ink:#1c2733; --muted:#5b6b7b; --line:#d9e2ec; --bg:#f6f8fa;
+          --brand:#0b5fa5; --ok:#1a7f37; --warn:#b35900; --bad:#c62828;
+          --code-bg:#101820; --code-ink:#d8e4ee; }
+  body { margin:0; font-family:"Noto Sans JP","Yu Gothic UI",Meiryo,sans-serif;
+         color:var(--ink); background:var(--bg); line-height:1.7; }
+  header { background:linear-gradient(135deg,#0b3d6b,#0b5fa5); color:#fff; padding:30px 24px 22px; }
+  header h1 { margin:0 0 6px; font-size:24px; }
+  header p { margin:0; opacity:.85; font-size:13.5px; }
+  main { max-width:960px; margin:0 auto; padding:22px 18px 80px; }
+  nav.toc { background:#fff; border:1px solid var(--line); border-radius:10px; padding:12px 18px; margin:16px 0 24px; font-size:13.5px; }
+  nav.toc ol { margin:6px 0 0; padding-left:22px; columns:2; }
+  nav.toc a { color:var(--brand); text-decoration:none; }
+  section { background:#fff; border:1px solid var(--line); border-radius:10px; padding:16px 20px; margin:0 0 20px; }
+  h2 { font-size:19px; border-bottom:3px solid var(--brand); padding-bottom:5px; margin-top:4px; }
+  h3 { font-size:15px; color:#0b3d6b; margin:18px 0 6px; }
+  pre { background:var(--code-bg); color:var(--code-ink); padding:11px 13px; border-radius:8px;
+        overflow-x:auto; font-size:12.3px; line-height:1.55; font-family:Consolas,monospace; }
+  code { font-family:Consolas,monospace; }
+  p code, li code, td code { background:#eef2f6; color:#0b3d6b; padding:1px 5px; border-radius:4px; font-size:92%; }
+  table { border-collapse:collapse; width:100%; font-size:13px; margin:8px 0; }
+  th,td { border:1px solid var(--line); padding:6px 9px; text-align:left; vertical-align:top; }
+  th { background:#eef4fa; }
+  .ok{color:var(--ok);font-weight:600} .warn{color:var(--warn);font-weight:600} .bad{color:var(--bad);font-weight:600}
+  .callout{border-left:4px solid var(--brand);background:#eef6fd;padding:9px 13px;border-radius:0 8px 8px 0;margin:10px 0;font-size:13.5px}
+  .callout.danger{border-color:var(--bad);background:#fdeeee}
+  .callout.tip{border-color:var(--ok);background:#eefaf1}
+  .step { display:inline-block; background:var(--brand); color:#fff; font-weight:700; font-size:12px;
+          border-radius:12px; padding:1px 10px; margin-right:8px; }
+  .check{list-style:none;padding-left:4px} .check li{margin:3px 0} .check input{margin-right:8px}
+  footer{text-align:center;color:var(--muted);font-size:12px;padding:18px}
+</style>
+</head>
+<body>
+<header>
+  <h1>CARE SEC AWS移行 成功手順</h1>
+  <p>2026-11-25〜26 実走で通ったコマンドと順序だけを記録。新規マシンでもこの順に再現できる。詳細設計は <code>AWS Setup Guide.html</code>、カメラは <code>CAMERA_PIPELINE_SETUP.md</code> 参照</p>
+</header>
+<main>
+
+<nav class="toc"><strong>目次</strong>
+  <ol>
+    <li><a href="#a">到達した全体像</a></li>
+    <li><a href="#b">0. 事前コード整備(開発機)</a></li>
+    <li><a href="#c">1. AWS基盤(VPC/SG/EC2)</a></li>
+    <li><a href="#d">2. OSセットアップ</a></li>
+    <li><a href="#e">3. アプリ展開(git/venv/systemd)</a></li>
+    <li><a href="#f">4. nginx+メディア保護</a></li>
+    <li><a href="#g">5. HTTPS(DuckDNS+certbot)</a></li>
+    <li><a href="#h">6. カメラ(WireGuard+既存配信pull)</a></li>
+    <li><a href="#i">7. 完成検証チェックリスト</a></li>
+    <li><a href="#j">8. 実走で踏んだ罠と解決(教訓集)</a></li>
+  </ol>
+</nav>
+
+<section id="a">
+<h2>到達した全体像</h2>
+<pre>
+Pi3(施設・動的IP) ──WireGuardトンネル──► EC2 t3.large(Ubuntu 26.04)
+  pi-cam1 :8080/stream(CSI libcamera MJPEG)      nginx 443(certbot/DuckDNS)
+  pi-cam2 :8081/stream(USB C270 uStreamer)         └► gunicorn 1worker+8threads
+  ※ ustreamer/picam_streamは既存資産。AWS側はpullするだけ   ├► Django(CARE SEC)
+                                                            ├► AI常駐スレッド(pose→LSTM3名+速度+CLIP)
+                                                            ├► db.sqlite3(EBS gp3 30G暗号化)
+                                                            └► media/(録画30日自動削除・ログイン限定配信)
+</pre>
+<ul class="check">
+  <li><input type="checkbox" checked> 録画30日自動削除+残り日数表示</li>
+  <li><input type="checkbox" checked> メディア=ログインユーザーのみ(未ログイン302実証)</li>
+  <li><input type="checkbox" checked> 転倒3名アンサンブル+CLIP検証官+速度ルール</li>
+  <li><input type="checkbox" checked> https://caresec.duckdns.org(自動更新timer実証)</li>
+  <li><input type="checkbox" checked> 環境バッジ(開発環境/本番AWS)+カメラ源ツマミ(auto/usb/net)</li>
+  <li><input type="checkbox" checked> Pi2台同時解析稼働(cam:1 cam:2)</li>
+</ul>
+</section>
+
+<section id="b">
+<h2><span class="step">0</span>事前コード整備(開発機・すべてコミット済み)</h2>
+<p>本番化に伴い必要になったコード修正。先に全部入っておくとサーバー側は迷わない:</p>
+<table>
+  <tr><th>修正</th><th>理由</th></tr>
+  <tr><td><code>STATIC_URL="/static/"</code>(絶対)+<code>STATIC_ROOT</code></td><td>相対URLだと /accounts/login/ 等でCSSが404。collectstaticの出力先定義</td></tr>
+  <tr><td><code>core/protected_media.py</code> + urlsのDEBUG分岐</td><td>DEBUG=0で/mediaが死なず、ログイン限定で配信されるため</td></tr>
+  <tr><td><code>if not DEBUG:</code> の https強化(SECURE_PROXY_SSL_HEADER/CSRF env/secure cookie)</td><td>nginxプロキシ越しhttpsとPOST CSRFの成立</td></tr>
+  <tr><td><code>apps.py</code> <code>_is_wsgi_server_process()</code></td><td class="bad">gunicornでAI常駐が起動しなかった本命(RUN_MAINはrunserver専用トークン)</td></tr>
+  <tr><td>検知プローブ⇔acquire対称抑止(<code>probe_running</code>/<code>_opening</code>)</td><td>同index二重open→MSMFゾンビ化の連鎖遮断(開発機で実害確認)</td></tr>
+  <tr><td><code>requirements.txt</code> に torch/torchvision(+cpu)+transformers</td><td>Linux本番でもCLIP検証官が生きているように</td></tr>
+  <tr><td>環境バッジ(<code>CARE_SEC_ENV</code>)+<code>AISettings.camera_source</code></td><td>開発/本番の取り違え防止とカメラ源ツマミ</td></tr>
+</table>
+</section>
+
+<section id="c">
+<h2><span class="step">1</span>AWS基盤(コンソール)</h2>
+<h3>1.1 VPC</h3>
+<p>デフォルトVPC(172.31.0.0/16)をそのまま使用。単一公開サーバーには専用VPC/NAT不要。</p>
+<h3>1.2 セキュリティグループ(新規 caresec-web)</h3>
+<table>
+  <tr><th>タイプ</th><th>ポート</th><th>送信元</th></tr>
+  <tr><td>HTTP/HTTPS</td><td>80, 443</td><td><code>0.0.0.0/0</code>(公開窓口)</td></tr>
+  <tr><td>SSH</td><td>22</td><td class="warn">自分のIP/32のみ(0.0.0.0/0禁止)</td></tr>
+  <tr><td>カスタムUDP</td><td>51820</td><td><code>0.0.0.0/0</code>(WireGuard。鍵認証済みしか通らない)</td></tr>
+</table>
+<div class="callout danger">8554(RTSP)は開かなかった。Pi→EC2はトンネル内(10.8.0.x)だけを流れ、公网に映像ポートは存在しない。</div>
+<h3>1.3 EC2起動</h3>
+<ul>
+  <li>AMI: <strong>Ubuntu 26.04 LTS</strong> / type: <strong>t3.large</strong> / EBS: <strong>30GiB gp3 + 暗号化(aws/ebs)</strong> / <strong>終了時に削除=いいえ</strong> / タームネット保護=有効</li>
+  <li>キーペア: 新規 <code>caresec-key</code>(.pem をダウンロード)</li>
+  <li>ユーザーデータ=ガイド6.2スクリプト(JST・apt・nginx・swapon 4G・unattended-upgrades・caresecユーザー)</li>
+</ul>
+<h3>1.4 Elastic IP</h3>
+<p>同じリージョンでEIPを割当→インスタンスに<b>関連付け</b>。以後IPは不変(自動パブリックIPは置き換わる)。</p>
+</section>
+
+<section id="d">
+<h2><span class="step">2</span>OSセットアップ(ubuntu帽子)</h2>
+<pre>
+ssh -i caresec-key.pem ubuntu@&lt;EIP&gt;
+
+free -h | grep -i swap      # 4.0Gi(user-data完走確認)
+timedatectl                 # Asia/Tokyo
+
+# Python: システム既定は3.14 → <b>ai2は3.13で運用</b>(TF/mediapipeのwheel実在)
+sudo add-apt-repository -y ppa:deadsnakes/ppa
+sudo apt update
+sudo apt install -y python3.13 python3.13-venv python-is-python3
+
+# ufw(SGと二重の最小許可)
+sudo ufw default deny incoming
+sudo ufw allow 22/tcp &amp;&amp; sudo ufw allow 80/tcp &amp;&amp; sudo ufw allow 443/tcp
+sudo ufw allow 51820/udp    # WireGuard
+sudo ufw enable
+
+sudo mkdir -p /srv/caresec &amp;&amp; sudo chown caresec:caresec /srv/caresec
+</pre>
+</section>
+
+<section id="e">
+<h2><span class="step">3</span>アプリ展開</h2>
+<h3>3.1 git(デプロイキー読み取り専用)</h3>
+<pre>
+# EC2(caresec名義)で鍵を作り GitHub リポジトリ→Settings→Deploy keys に登録
+sudo -u caresec -H bash
+mkdir -p ~/.ssh &amp;&amp; ssh-keygen -t ed25519 -f ~/.ssh/github_deploy -N "" -C "caresec-ec2"
+git config --global url."git@github.com:".insteadOf "https://github.com/"
+git config --global core.sshCommand "ssh -i ~/.ssh/github_deploy -o IdentitiesOnly=yes"
+git config --global --add safe.directory /srv/caresec
+git clone git@github.com:【アカウント】/care_sec.git /srv/caresec
+</pre>
+<h3>3.2 venv+依存</h3>
+<pre>
+cd /srv/caresec &amp;&amp; python3.13 -m venv .venv &amp;&amp; source .venv/bin/activate
+pip install -U pip
+pip install -r requirements.txt
+pip install --index-url https://download.pytorch.org/whl/cpu torch==2.15.0 torchvision==0.29.2
+pip install transformers==5.24.0
+# CLIPモデル事前DL(初回アラートで600MB DLを待たない)
+python -c "from transformers import CLIPModel, CLIPProcessor; \
+CLIPModel.from_pretrained('openai/clip-vit-base-patch32'); \
+CLIPProcessor.from_pretrained('openai/clip-vit-base-patch32')"
+</pre>
+<h3>3.3 環境ファイル(SECRET_KEYはコードに書かない)</h3>
+<pre>
+KEY=$(sudo -u caresec /srv/caresec/.venv/bin/python -c "from django.core.management.utils import get_random_secret_key as g; print(g())")
+sudo bash -c "cat > /etc/care-sec.env <<EOF
+CARE_SEC_DEBUG=0
+CARE_SEC_SECRET_KEY=$KEY
+CARE_SEC_ALLOWED_HOSTS=&lt;EIP&gt;,caresec.duckdns.org
+CARE_SEC_CSRF_ORIGINS=https://caresec.duckdns.org
+CARE_SEC_ENV=prod
+EOF"
+sudo chown root:caresec /etc/care-sec.env &amp;&amp; sudo chmod 640 /etc/care-sec.env
+</pre>
+<h3>3.4 DB/静的/systemd(gunicorn <b>workers=1必須</b>)</h3>
+<pre>
+sudo -u caresec bash -c "cd /srv/caresec &amp;&amp; .venv/bin/python manage.py migrate &amp;&amp; .venv/bin/python manage.py collectstatic --noinput"
+
+sudo tee /etc/systemd/system/caresec.service >/dev/null &lt;&lt;'EOF'
+[Unit]
+Description=CARE SEC (Django + AI engine)
+After=network-online.target
+[Service]
+User=caresec
+Group=www-data
+WorkingDirectory=/srv/caresec
+EnvironmentFile=/etc/care-sec.env
+ExecStart=/srv/caresec/.venv/bin/gunicorn config.wsgi:application \
+  --bind 127.0.0.1:8000 --workers 1 --threads 8 \
+  --timeout 120 --graceful-timeout 30 --access-logfile - --error-logfile -
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=multi-user.target
+EOF
+sudo systemctl daemon-reload &amp;&amp; sudo systemctl enable --now caresec
+sudo journalctl -u caresec --no-pager | grep -E "準備が完了|常時稼働"
+# 期待: AIモデルの準備が完了しました(…秒 / 転倒=3名)
+</pre>
+<h3>3.5 最初の管理者</h3>
+<pre>
+PASS=$(openssl rand -base64 18)
+sudo -u caresec bash -c "cd /srv/caresec &amp;&amp; .venv/bin/python manage.py shell -c \"
+from core.models import User
+u, c = User.objects.get_or_create(username='admin', defaults={'is_admin': True})
+u.set_password('$PASS'); u.is_admin = True; u.save(); print(c)\""
+echo $PASS   # 初回ログイン後に変更
+</pre>
+</section>
+
+<section id="f">
+<h2><span class="step">4</span>nginx + メディア保護</h2>
+<pre>
+sudo tee /etc/nginx/sites-available/caresec >/dev/null &lt;&lt;'EOF'
+server {
+    listen 80;
+    server_name caresec.duckdns.org &lt;EIP&gt;;
+    location /static/ { alias /srv/caresec/staticfiles/; expires 7d; access_log off; }
+    # /media/ は静态配信しない(Djangoのprotected_mediaがログイン判定後に返す)
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 120s; client_max_body_size 50m;
+    }
+}
+EOF
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo ln -sf /etc/nginx/sites-available/caresec /etc/nginx/sites-enabled/caresec
+sudo nginx -t &amp;&amp; sudo systemctl reload nginx
+</pre>
+<div class="callout tip">サーバー名に<b>ドメインとIPの両方</b>を最初から書いておくと、後段のcertbotが「一致するブロック」を見つけられる(実走で一度はまった)。</div>
+</section>
+
+<section id="g">
+<h2><span class="step">5</span>HTTPS(DuckDNS無料 + certbot)</h2>
+<pre>
+# 1) https://www.duckdns.org で caresec.duckdns.org → EIP を登録(current ip=EIP!)
+# 2) EC2:
+sudo apt install -y certbot python3-certbot-nginx
+sudo certbot --nginx -d caresec.duckdns.org
+#    失敗: "Could not automatically find a matching server block"
+#    解決: server_name にドメインを追記して reload → certbot install 再実行
+sudo sed -i 's/server_name &lt;EIP&gt;;/server_name caresec.duckdns.org &lt;EIP&gt;;/' /etc/nginx/sites-available/caresec
+sudo nginx -t &amp;&amp; sudo systemctl reload nginx
+sudo certbot install --cert-name caresec.duckdns.org   # Redirect=2
+
+# 3) 検証
+curl -s -o /dev/null -w "%{http_code} → %{redirect_url}\n" http://caresec.duckdns.org/   # 301 → https
+curl -s -o /dev/null -w "%{http_code}\n" https://caresec.duckdns.org/accounts/login/      # 200
+systemctl list-timers | grep -i certbot            # 自動更新timer生存
+sudo certbot renew --dry-run                        # 稽古成功
+</pre>
+</section>
+
+<section id="h">
+<h2><span class="step">6</span>カメラ:WireGuard + 既存Pi配信のpull</h2>
+<p>Piには既存の <code>pi-cam1</code>(CSI 8080/stream)・<code>pi-cam2</code>(C270 uStreamer 8081/stream)が動いており、<b>新規ソフトはEC2にもPiにも入れない</b>。トンネルを敷いてpullするだけ:</p>
+<pre>
+# EC2(サーバー役)
+sudo apt install -y wireguard-tools
+sudo wg genkey | sudo tee /etc/wireguard/server.key | sudo wg pubkey | sudo tee /etc/wireguard/server.pub
+sudo bash -c "cat > /etc/wireguard/wg0.conf <<EOF
+[Interface]
+PrivateKey = $(sudo cat /etc/wireguard/server.key)
+Address = 10.8.0.1/24
+ListenPort = 51820
+
+[Peer]
+PublicKey = 【Piのpi.pub】
+AllowedIPs = 10.8.0.2/32
+EOF"
+sudo chmod 600 /etc/wireguard/wg0.conf
+sudo systemctl enable --now wg-quick@wg0
+
+# Pi(クライアント役) — 公開鍵を相互交換するだけ
+sudo wg genkey | sudo tee /etc/wireguard/pi.key | sudo wg pubkey | sudo tee /etc/wireguard/pi.pub
+# wg0.conf: Address=10.8.0.2/24 / Peer=EC2のserver.pub, Endpoint=&lt;EIP&gt;:51820, AllowedIPs=10.8.0.1/32, PersistentKeepalive=25
+sudo systemctl enable --now wg-quick@wg0
+
+# 成立確認: 両側 wg show の "latest handshake" が1〜3分内で更新され続ける
+# 施設IPが動的でも WireGuard が自動追従(endpointに現在IPが出る)
+
+# ai2台帳登録(ustreamerの映像パスは /mjpg ではなく <b>/stream</b>。404メッセージを信じる)
+sudo -u caresec bash -c "cd /srv/caresec &amp;&amp; .venv/bin/python manage.py shell -c \"
+from core.models import Camera
+for name, loc, url in [
+    ('Pi3-cam1(CSI)','棟A 居室1','http://10.8.0.2:8080/stream'),
+    ('Pi3-cam2(USB)','棟A 共用部','http://10.8.0.2:8081/stream'),
+]:
+    c, cr = Camera.objects.get_or_create(name=name, defaults={'location': loc})
+    c.stream_url = url; c.save(); print(c.id, name, cr)\""
+
+# 本番のカメラ源は net(USB検知を走らせない)。管理画面→AI設定→カメラ源=「ネットワークのみ」
+# 30〜60秒で [RealtimeAI] 常時稼働を開始しました: index ['cam:1','cam:2'] が出る
+</pre>
+</section>
+
+<section id="i">
+<h2><span class="step">7</span>完成検証チェックリスト</h2>
+<ul class="check">
+  <li><input type="checkbox"> <code>https://caresec.duckdns.org</code> 鍵マーク・警告なし・ログイン成功</li>
+  <li><input type="checkbox"> ヘッダーに緑「本番 AWS」バッジ(開発機は橙「開発環境」)</li>
+  <li><input type="checkbox"> <code>curl http://…/media/recordings/x.mp4</code> 未ログイン=302、ログイン=200</li>
+  <li><input type="checkbox"> <code>curl -sI http://127.0.0.1/static/css/style.css</code>=200(nginx直接)</li>
+  <li><input type="checkbox"> journalctl: <code>転倒=3名</code> + <code>cam:1 cam:2 解析稼働中</code></li>
+  <li><input type="checkbox"> /debug/camera/ で2台のライブ+人物判定</li>
+  <li><input type="checkbox"> <code>certbot renew --dry-run</code> 成功 + timer生存</li>
+  <li><input type="checkbox"> <code>manage.py test core</code> 37件OK(開発機)</li>
+  <li><input type="checkbox"> <b>残: バックアップ(DLM日次スナップショット+sqlite .backup)と復旧リハーサル</b></li>
+</ul>
+</section>
+
+<section id="j">
+<h2><span class="step">8</span>実走で踏んだ罠と解決(教訓集)</h2>
+<table>
+  <tr><th>罠</th><th>症状</th><th>解決</th></tr>
+  <tr><td>gunicornでAI不启动</td><td>Webは動くのにjournalctlに[RealtimeAI]ゼロ</td><td><code>_is_wsgi_server_process()</code>追加(RUN_MAINはrunserver専用)</td></tr>
+  <tr><td>Python 3.14既定</td><td>TF/mediapipeのwheelが無い</td><td>deadsnakesで3.13導入。venvだけ3.13、システムpythonは触らない</td></tr>
+  <tr><td>torchの+cpu</td><td>PyPIに+cpu版は存在しない</td><td>--index-url https://download.pytorch.org/whl/cpu を分段で</td></tr>
+  <tr><td>STATIC_URL相対</td><td>loginページだけCSS404</td><td>"/static/"絶対+STATIC_ROOT+collectstatic</td></tr>
+  <tr><td>certbot install失敗</td><td>証明書は取れるのに「matching server blockなし」</td><td>server_nameにドメイン追記→reload→certbot install再実行</td></tr>
+  <tr><td>DuckDNS初期IP</td><td>自分のPCのIPが自動入力される</td><td>current ipをEIPにupdate ip</td></tr>
+  <tr><td>MediaMTX include</td><td>ERR json: unknown field "include"</td><td>pathsは本体ymlへマージ(include構文なし)</td></tr>
+  <tr><td>/usr/local/src DL</td><td>Permission denied</td><td>/tmpでDL→sudo tar展開</td></tr>
+  <tr><td>ustreamerの404</td><td>/mjpg/が無い</td><td>正解は<b>/stream</b>(indexのhrefを信じる)</td></tr>
+  <tr><td>サーバー二重起動</td><td>index1「他のデバイスが使用中」</td><td>runserverは常に1個。systemd環境は元々1個</td></tr>
+  <tr><td>検知⇔acquire二重open</td><td>MSMFゾンビスレッドがC270を握り続け全open失敗</td><td>probe_running/_opening対称抑止+サーバー再起動でゾンビ消去</td></tr>
+  <tr><td>vcgencmd get_camera</td><td>supported=0と出て誤認</td><td>新OSでは廃止。libcameraのRegistered行が真相</td></tr>
+  <tr><td>HEADでcontent-type確認</td><td>/streamがtext/htmlと誤答</td><td>GET+head -c 200でboundary/JFIFを見る</td></tr>
+  <tr><td>多行コマンドペースト</td><td>^[[200~混入でcommand not found</td><td>1行ずつ実行/bracketed-paste off</td></tr>
+</table>
+<div class="callout danger">次回のための最短教訓: <b>①サーバーは1個 ②カメラのopen競合は対称ガード ③gunicorn=workers1 ④Python3.13 ⑤certbot前にserver_name確認 ⑥バックアップは動き出す前に</b></div>
+</section>
+
+<footer>CARE SEC AWS移行 成功手順 — 2026-11-26 実走記録(v1.0)。設計詳細は AWS Setup Guide.html / カメラは CAMERA_PIPELINE_SETUP.md</footer>
+</main>
+</body>
+</html>

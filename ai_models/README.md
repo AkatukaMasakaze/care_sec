@@ -6,8 +6,9 @@
 | 種別 | ファイル / フォルダ | 用途 |
 |---|---|---|
 | 推論(現行) | `pose_landmarker_full.task` | MediaPipe Pose(33ランドマーク抽出・最大5人) |
-| 推論(現行) | `fall_detection_lstm.keras` | 転倒判定LSTM。**2026-11-17 に ai2.0 の grouped+normalized 版を正準名へ置き換え済み**(入力は腰中心/体幹尺度の正規化。旧単一人物版は `backup/manual-20261117-133556/` に退避) |
-| 参照コピー | `fall_detection_lstm_grouped_normalized.keras` | 上の置き換え元と同一内容(由来の証跡。エンジンが読むのは正準名のみ) |
+| 推論(現行) | `fall_detection_lstm.keras` | 転倒判定LSTM(**2026-11-24にクラス重み+反転aug+3シードで再構築**)。入力は腰中心/体幹尺度の正規化(grouped+normalized) |
+| 推論(現行) | `fall_detection_lstm_e2.keras` / `_e3.keras` | アンサンブル2・3名目。`AI_FALL_MODEL_FILES`の**実在分だけ確率平均**(1個なら単一動作と互換)。旧単一モデルは `backup/manual-20261124-100228/` に退避 |
+| 参照コピー | `fall_detection_lstm_grouped_normalized.keras` | 11/17置き換え由来の証跡(エンジンが読むのは正準3名のみ) |
 | 推論(現行) | `state_detection_lstm.keras` | 状態判定LSTM(8クラス。**生の99値**で学習済み→正規化しない) |
 | 推論(現行) | `state_labels.npy` | 状態ラベル(上記8クラスの並び順) |
 | 学習の中間 | `candidates/` | `ai_train_*` が書き出す**未反映の候補モデル** |
@@ -21,6 +22,10 @@
 > (`core/retraining.py`)。変わっていなければ数秒で素通りするので、
 > autoreload の再起動を繰り返しても無駄に学習しません。
 > 状況確認は `python manage.py ai_retrain --status`、手動実行は下記コマンドを使います。
+>
+> **既定の再学習は「反転aug+クラス重み+3シードアンサンブル」**(2026-11-24)。
+> `AI_RETRAIN_FALL_ENSEMBLE`/`AI_RETRAIN_FALL_AUGMENT` で調整。promote時は
+> `AI_FALL_MODEL_FILES` の3名分がまとめて候補→反映され、**反映後にサーバー再起動が必要**。
 
 ```powershell
 # 1) 新しい材料を収集(runserver を止めてから。カメラを掴んでいると開けません)
