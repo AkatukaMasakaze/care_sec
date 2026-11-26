@@ -1773,9 +1773,23 @@ class RealtimeAIEngine:
 
     # ---------------- 常時稼働 ----------------
     @staticmethod
+    def _camera_source_mode():
+        """AISettings.camera_source(自動/USBのみ/ネットワークのみ)。DBエラー時はauto"""
+        try:
+            from .models import AISettings
+
+            return str(AISettings.load().camera_source or "auto")
+        except Exception:  # noqa: BLE001 -ツマミ読めなくても検知は止めない
+            return "auto"
+
+    @staticmethod
     def target_devices():
         """常時稼働の対象カメラ一覧と、**開く順序**
 
+        - `AISettings.camera_source`(管理画面のカメラ源ツマミ)で源を絞る:
+            net = Pi等のネットワークカメラのみ(USB検知自体走らせない=AWS本番)
+            usb = USBのみ(stream_url 無視=開発機)
+            auto = 両方(既定)
         - `AI_ALWAYS_DEVICES` を指定していればそれを対象にする(運用で絞れる)
         - 無ければ **検知できたカメラ全て**(検知中/未接続なら探索範囲を素で試す)
         - 開く順序は `AI_CAMERA_PRIORITY`(list)が最優先。
@@ -1786,11 +1800,16 @@ class RealtimeAIEngine:
         """
         explicit = getattr(settings, "AI_ALWAYS_DEVICES", None)
         priority = getattr(settings, "AI_CAMERA_PRIORITY", None)
+        mode = ai_engine._camera_source_mode()
 
         # 1) ネットワークカメラ(IP): USB总线を介さないので同時運用の制約を受けない
-        ip_keys = [source["key"] for source in camera_service.network_sources()]
+        ip_keys = []
+        if mode in ("auto", "net"):
+            ip_keys = [source["key"] for source in camera_service.network_sources()]
 
         # 2) ローカル(USB)カメラ
+        if mode == "net":
+            return ip_keys          # AWS本番: 総当たりprobe自体を走らせない
         if explicit is not None:
             candidates = sorted(int(index) for index in explicit)
         else:
@@ -1826,6 +1845,28 @@ class RealtimeAIEngine:
         # IP を先、USB を後(USB側は先に開いた方が帯域を取る)
         return ip_keys + candidates
 
+    def _enforce_camera_source(self):
+        """カメラ源ツマミの対象外ランタイムを常時稼働から外す(停止+解放)
+
+        stop_persistent は self._lock を内部で取るため、ここでは lock を跨がない。
+        """
+        mode = self._camera_source_mode()
+        if mode == "auto":
+            return
+        with self._lock:
+            devices = list(self._runtimes.keys())
+        for device in devices:
+            is_net = isinstance(device, str) and device.startswith(camera_service.NETWORK_PREFIX)
+            out_of_scope = (mode == "net" and not is_net) or (mode == "usb" and is_net)
+            if not out_of_scope:
+                continue
+            with self._lock:
+                runtime = self._runtimes.get(device)
+                persistent = runtime is not None and runtime.persistent
+            if persistent:
+                print("[RealtimeAI] カメラ源=%s のため %s の常時稼働を停止します" % (mode, device))
+            self.stop_persistent(device)   # 対象外は常に確実に外す(冪等)
+
     def start_persistent(self, device=None, verbose=True):
         """バックグラウンド解析を開始して止めない状態にする(画面を離れても動く)
 
@@ -1839,6 +1880,9 @@ class RealtimeAIEngine:
             return False
 
         if device is None:
+            # 源ツマミのライブ反映: net/usb に切られた側の既存常時稼働を止める
+            # (30秒サイクルごとにここを通るので、管理画面変更だけで環境が切り替わる)
+            self._enforce_camera_source()
             targets = self.target_devices()
         else:
             # USB index(int)と IPキー(str)の両方を受け取る(int変換はしない)

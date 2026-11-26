@@ -266,6 +266,21 @@ class Alert(models.Model):
 class AISettings(models.Model):
     """AI検知の設定(誤検知フィードバックで自動調整される)"""
     enabled = models.BooleanField("AI監視を稼働する", default=True)
+
+    class CameraSource(models.TextChoices):
+        AUTO = "auto", "自動(USB+ネットワーク)"
+        USB = "usb", "USBのみ(開発機)"
+        NET = "net", "ネットワークのみ(AWS本番)"
+
+    # --- カメラ源ツマミ(2026-11-26) ---
+    # 開発機はUSBカメラ+Frame Serverの地雷原、AWSはPi配信のみ。同じコードで
+    # 両方を動かすため「どの源を見るか」を台帳ではなくここで切り替える。
+    # net にするとUSB検知(総当たりprobe)自体を走らせない=本番で無意味な
+    # open競合を起こさない。usb にすると stream_url を無視する。
+    # 変更は30秒サイクル(start_persistent)で反映され、対象外の源は自動停止する。
+    camera_source = models.CharField(
+        "カメラ源", max_length=8, choices=CameraSource.choices,
+        default=CameraSource.AUTO)
     # 既定0.50: ai2.0系 grouped+normalized モデルの設計値(ai2.0 realtime_lstm.py の
     # PREDICTION_THRESHOLD=0.5)。旧単一人物モデル時代の0.75は分布が合わず
     # 見逃し率が悪化していた(実測: 窓レベル見逃し 25%→31%、実測2026-11-18)。

@@ -32,6 +32,12 @@ ALLOWED_HOSTS = ["localhost", "127.0.0.1", "testserver"] + [
     if host.strip()
 ]
 
+# --- 環境識別バッジ(2026-11-26) ---
+# 開発機とAWS本番が同じ顔をしていて「どちらに操作したか」事故が起きやすい為、
+# ヘッダーに常時バッジを出す。既定は開発環境。本番の /etc/care-sec.env で
+# CARE_SEC_ENV=prod を設定すると緑の「本番 AWS」になる。
+ENV_NAME = os.environ.get("CARE_SEC_ENV", "dev").strip().lower()
+
 # --- 本番(DEBUG=0)のhttps前提の強化(AWS Setup Guide 9章 / DuckDNS+certbot) ---
 if not DEBUG:
     # nginx が X-Forwarded-Proto: https を立ててプロキシする前提(certbot --nginx が設定)。
@@ -92,6 +98,7 @@ TEMPLATES = [
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
                 "core.context_processors.asset_version",
+                "core.context_processors.env_badge",
                 "core.context_processors.alert_globals",
             ],
         },

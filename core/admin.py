@@ -206,4 +206,4 @@ class AlertReportAdmin(BaseModelAdmin):
 
 @admin.register(AISettings, site=admin_site)
 class AISettingsAdmin(BaseModelAdmin):
-    list_display = ("enabled", "fall_threshold", "stillness_seconds", "cooldown_seconds", "sensitivity")
+    list_display = ("enabled", "camera_source", "fall_threshold", "stillness_seconds", "cooldown_seconds", "sensitivity")

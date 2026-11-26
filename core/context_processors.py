@@ -14,6 +14,15 @@ def asset_version(request):
     return {"asset_ver": ASSET_VER}
 
 
+def env_badge(request):
+    """ヘッダーの環境識別バッジ(開発=橙 / 本番=緑)。ログイン画面にも出す"""
+    from django.conf import settings
+
+    if settings.ENV_NAME == "prod":
+        return {"env_badge": {"key": "prod", "label": "本番 AWS"}}
+    return {"env_badge": {"key": "dev", "label": "開発環境"}}
+
+
 def alert_globals(request):
     # 未ログイン(ログイン画面など)では何も渡さない
     if not request.user.is_authenticated:

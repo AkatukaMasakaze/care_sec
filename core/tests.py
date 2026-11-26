@@ -406,6 +406,102 @@ class RecordingRetentionTest(TestCase):
         self.assertTrue(Recording.objects.filter(id=old.id).exists())
 
 
+class EnvBadgeTest(TestCase):
+    """環境識別バッジ(開発=橙/本番=緑)。操作対象の取り違え事故防止"""
+
+    def setUp(self):
+        self.user = User.objects.create_user("badge_user", password="x")
+
+    def test_dev_badge_by_default(self):
+        self.client.force_login(self.user)
+        res = self.client.get("/")
+        self.assertContains(res, "開発環境")
+        self.assertContains(res, "env-badge--dev")
+
+    def test_prod_badge_when_env_prod(self):
+        from django.test import override_settings
+
+        self.client.force_login(self.user)
+        with override_settings(ENV_NAME="prod"):
+            res = self.client.get("/")
+        self.assertContains(res, "本番 AWS")
+        self.assertContains(res, "env-badge--prod")
+
+
+class CameraSourceKnobTest(TestCase):
+    """カメラ源ツマミ(AISettings.camera_source)の対象選別
+
+    net = USB検知を走らせない(AWS本番) / usb = stream_url無視(開発機) / auto = 両方
+    """
+
+    def setUp(self):
+        from django.test import override_settings
+
+        from core import camera_service
+
+        # 台帳: ネットワークカメラ1台
+        Camera.objects.create(name="Pi-cam", location="棟A",
+                              stream_url="http://10.8.0.2:8080/stream")
+        # USB検知結果をスタブ(テスト中に実カメラを開かせない)
+        self._detect = override_settings()
+        patcher = _PatchDetect()
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.camera_service = camera_service
+
+    def test_net_mode_excludes_usb(self):
+        from core.ai_engine import ai_engine
+
+        ai = AISettings.load()
+        ai.camera_source = AISettings.CameraSource.NET
+        ai.save()
+        targets = ai_engine.target_devices()
+        self.assertTrue(any(str(t).startswith("cam:") for t in targets))
+        self.assertFalse(any(isinstance(t, int) for t in targets))
+
+    def test_usb_mode_excludes_network(self):
+        from core.ai_engine import ai_engine
+
+        ai = AISettings.load()
+        ai.camera_source = AISettings.CameraSource.USB
+        ai.save()
+        targets = ai_engine.target_devices()
+        self.assertFalse(any(str(t).startswith("cam:") for t in targets))
+
+    def test_auto_mode_includes_both(self):
+        from core.ai_engine import ai_engine
+
+        ai = AISettings.load()
+        ai.camera_source = AISettings.CameraSource.AUTO
+        ai.save()
+        targets = ai_engine.target_devices()
+        self.assertTrue(any(str(t).startswith("cam:") for t in targets))
+        self.assertTrue(any(isinstance(t, int) for t in targets))
+
+
+class _PatchDetect:
+    """camera_service.detect_devices / network_sources のテスト用スタブ"""
+
+    def start(self):
+        from unittest import mock
+
+        from core import camera_service
+
+        self._patches = [
+            mock.patch.object(camera_service, "detect_devices", return_value={
+                "ok": True, "devices": [{"index": 0, "available": True},
+                                        {"index": 1, "available": True}],
+            }),
+            mock.patch.object(camera_service, "known_indices", return_value=[0, 1]),
+        ]
+        for p in self._patches:
+            p.start()
+
+    def stop(self):
+        for p in self._patches:
+            p.stop()
+
+
 def Recording_exists(recording_id):
     from core.models import Recording
 

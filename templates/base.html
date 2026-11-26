@@ -30,6 +30,9 @@
     </div>
 
     <div class="topbar__info">
+      {% if env_badge %}
+      <span class="env-badge env-badge--{{ env_badge.key }}" title="CARE_SEC_ENV={{ env_badge.key }}">{{ env_badge.label }}</span>
+      {% endif %}
       <span id="clock" class="topbar__clock">----/--/-- --:--:--</span>
       <a href="{% url 'alert_list' %}" class="topbar__alert-badge" title="未対応の異常一覧へ">
         ⚠ 未対応 <span id="alert-badge-count">{{ open_alert_count|default:0 }}</span>
