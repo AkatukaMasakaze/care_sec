@@ -154,6 +154,35 @@
   <p class="muted" id="grid-empty" hidden>表示できるカメラがありません(検知中か、カメラが接続されていません)。</p>
   <p class="form-error-banner" id="grid-error" hidden></p>
 </section>
+
+{# ===== 占有調査 / 強制接収 ===== #}
+<section class="card"
+         id="takeover-card"
+         data-holders-url="{% url 'debug_camera_holders' %}"
+         data-force-url="{% url 'debug_camera_force_acquire' %}">
+  <div class="card__header">
+    <h2>占有調査 / 強制接収</h2>
+  </div>
+  <p class="muted">
+    カメラが「開けない/他のデバイスが使用中」のとき、<strong>掴んでいるプロセス</strong>を
+    Windowsのカメラ利用記録とプロセス一覧から特定します。Windowsのカメラハンドルは
+    OS排他管理のため<strong>奪い取るAPIは存在しません</strong> — このパネルは
+    <strong>選んだプロセスをkillして再確保する</strong>最後の手段です(自動では絶対にkillしない)。
+    ※ DSHOW経由の掴み方はOSの記録に残らないことがあります。その場合は
+    「runserver残骸(=ai2自身の二重起動)」が候補です。
+  </p>
+  <div class="demo-actions">
+    <select id="takeover-device" class="input"></select>
+    <button type="button" class="btn btn--ghost btn--sm" id="takeover-scan">保有者を特定</button>
+    <button type="button" class="btn btn--danger btn--sm" id="takeover-force" hidden>選択をkillして強制確保</button>
+  </div>
+  <table class="mini-table" id="takeover-table" hidden>
+    <thead><tr><th></th><th>プロセス</th><th>PID</th><th>状態</th><th>最終使用</th><th>種別</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <p class="muted" id="takeover-empty" hidden>使用中/直近使用の記録はありません(空いている可能性大)。</p>
+  <pre class="muted" id="takeover-result" hidden style="white-space:pre-wrap"></pre>
+</section>
 {% endblock %}
 
 {% block extra_js %}

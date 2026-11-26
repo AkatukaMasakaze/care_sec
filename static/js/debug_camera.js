@@ -953,3 +953,131 @@
     }
   }, 6000);
 })();
+
+/* ===== 占有調査 / 強制接収(管理者のみ表示のセクション) ===== */
+(function () {
+  var card = document.getElementById("takeover-card");
+  if (!card) { return; }
+  var sel = document.getElementById("takeover-device");
+  var scanBtn = document.getElementById("takeover-scan");
+  var forceBtn = document.getElementById("takeover-force");
+  var table = document.getElementById("takeover-table");
+  var tbody = table.querySelector("tbody");
+  var emptyEl = document.getElementById("takeover-empty");
+  var resultEl = document.getElementById("takeover-result");
+
+  function getCookie(name) {
+    var m = document.cookie.match(new RegExp("(^|;\\s*)" + name + "=([^;]*)"));
+    return m ? decodeURIComponent(m[2]) : "";
+  }
+
+  /* USB index のデバイスだけを下拉に(ネットワークカメラは占有の概念が無い) */
+  function fillDevices() {
+    var sec = document.getElementById("debug-camera");
+    if (!sec) { return; }
+    fetch(sec.dataset.devicesUrl, { credentials: "same-origin" })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        var list = (data.devices || []).filter(function (d) {
+          return typeof d.index === "number";
+        });
+        sel.innerHTML = "";
+        list.forEach(function (d) {
+          var o = document.createElement("option");
+          o.value = String(d.index);
+          o.textContent = "index " + d.index + " " + (d.name || "");
+          sel.appendChild(o);
+        });
+        if (!list.length) {
+          var o = document.createElement("option");
+          o.value = "0"; o.textContent = "index 0(未検知)";
+          sel.appendChild(o);
+        }
+      })
+      .catch(function () {});
+  }
+  fillDevices();
+
+  function render(list) {
+    tbody.innerHTML = "";
+    forceBtn.hidden = true;
+    table.hidden = list.length === 0;
+    emptyEl.hidden = list.length !== 0;
+    list.forEach(function (h) {
+      var tr = document.createElement("tr");
+      var tdPick = document.createElement("td");
+      if (h.pid) {
+        var cb = document.createElement("input");
+        cb.type = "checkbox"; cb.value = String(h.pid);
+        cb.className = "takeover-pid";
+        tdPick.appendChild(cb);
+      } else {
+        tdPick.textContent = "—";
+      }
+      var tdName = document.createElement("td");
+      tdName.textContent = h.name || "(不明)";
+      tdName.title = h.path || "";
+      var tdPid = document.createElement("td");
+      tdPid.textContent = h.pid ? String(h.pid) : "(終了済?)";
+      var tdUse = document.createElement("td");
+      tdUse.textContent = h.using ? "使用中" : "直近使用";
+      tdUse.className = h.using ? "chip chip--fall" : "chip";
+      var tdWhen = document.createElement("td");
+      tdWhen.textContent = h.last_used || "";
+      var tdKind = document.createElement("td");
+      tdKind.textContent = h.kind === "ai2" ? "ai2残骸" : "アプリ";
+      [tdPick, tdName, tdPid, tdUse, tdWhen, tdKind].forEach(function (td) { tr.appendChild(td); });
+      tbody.appendChild(tr);
+    });
+    if (list.length) { forceBtn.hidden = false; }
+  }
+
+  scanBtn.addEventListener("click", function () {
+    resultEl.hidden = true;
+    scanBtn.disabled = true;
+    fetch(card.dataset.holdersUrl + "?device=" + encodeURIComponent(sel.value),
+          { credentials: "same-origin" })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (!data.ok) { throw new Error(data.error || "取得失敗"); }
+        render(data.holders || []);
+      })
+      .catch(function (err) {
+        resultEl.hidden = false;
+        resultEl.textContent = "エラー: " + err.message;
+      })
+      .finally(function () { scanBtn.disabled = false; });
+  });
+
+  forceBtn.addEventListener("click", function () {
+    var pids = Array.prototype.slice
+      .call(document.querySelectorAll(".takeover-pid:checked"))
+      .map(function (cb) { return cb.value; });
+    if (!pids.length) { alert("プロセスにチェックを入れてください"); return; }
+    if (!confirm("PID " + pids.join(", ") + " を終了してカメラを再確保します。\n対象アプリは作業中なら内容が失われます。本当に実行しますか?")) { return; }
+    var body = new URLSearchParams();
+    body.set("csrfmiddlewaretoken", getCookie("csrftoken"));
+    body.set("device", sel.value);
+    pids.forEach(function (p) { body.append("pids", p); });
+    forceBtn.disabled = true;
+    fetch(card.dataset.forceUrl, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        resultEl.hidden = false;
+        resultEl.textContent =
+          "終了: " + data.killed + "件 / 再確保: " + (data.ok ? "成功" : "失敗") +
+          "\n" + (data.messages || []).join("\n") + "\n" + (data.note || "");
+        scanBtn.click();
+      })
+      .catch(function (err) {
+        resultEl.hidden = false;
+        resultEl.textContent = "失敗: " + err.message;
+      })
+      .finally(function () { forceBtn.disabled = false; });
+  });
+})();

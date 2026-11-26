@@ -648,6 +648,54 @@ def debug_camera_readiness(request):
 
 
 @admin_required
+def debug_camera_holders(request):
+    """このカメラを今/直近使っているプロセス一覧(読むだけ・無害)"""
+    index = _parse_device_key(request.GET.get("device"))
+    if index is None or isinstance(index, str):
+        return JsonResponse({"ok": False, "error": "USB index のカメラのみ対象です"}, status=400)
+    return JsonResponse({"ok": True, "device": index,
+                         "holders": camera_service.camera_holders(index)})
+
+
+@admin_required
+@require_POST
+def debug_camera_force_acquire(request):
+    """選択された占有プロセスを kill してカメラを再確保する(管理者の明示操作)
+
+    Windows のカメラハンドルはOS排他で「奪取」APIが無いため、唯一の手段が
+    保持プロセスの終了である。ここは必ず ①一覧から選んだPIDだけ ②POST+確認、で
+    実行する(自動では絶対にkillしない)。
+    """
+    index = _parse_device_key(request.POST.get("device"))
+    if index is None or isinstance(index, str):
+        return JsonResponse({"ok": False, "error": "USB index のカメラのみ対象です"}, status=400)
+    pids = [p for p in request.POST.getlist("pids") if str(p).isdigit()]
+    if not pids:
+        return JsonResponse({"ok": False, "error": "終了するプロセスが選択されていません"}, status=400)
+
+    from . import readiness
+
+    messages = []
+    killed = 0
+    for pid in pids:
+        ok, msg = camera_service.kill_holder(pid)
+        messages.append(msg)
+        if ok:
+            killed += 1
+    readiness.note("camera", "強制接収: %dプロセス終了 → index %s 再確保試行" % (killed, index), "warn")
+
+    time.sleep(1.0)   # ハンドル解放を待つ(Windowsはプロセス終了後も一瞬残ることがある)
+    started = realtime_ai.start_persistent(device=index, verbose=True)
+    if not started:
+        started = realtime_ai.start_persistent(device=index, verbose=False)  # 1回だけ再試行
+    return JsonResponse({
+        "ok": bool(started), "killed": killed, "messages": messages,
+        "device": index,
+        "note": "確保成功" if started else "kill 後も開けません(別の保持者/ドライバ/USBの問題)",
+    })
+
+
+@admin_required
 def debug_camera_stream(request):
     """選択デバイスのMJPEGストリーム(?device=インデックス)
 

@@ -1083,6 +1083,14 @@ def acquire(index):
     # 実際に決まった形式をサーバーのログに出す(MJPG になったかをここで確認する)
     print(f"[Camera:{index}] 取り込み形式: {_fourcc_name(cap) or '不明'} / {backend_name}"
           f" / {int(cap.get(3))}x{int(cap.get(4))}")
+    try:
+        from . import readiness
+
+        readiness.note("camera", "index %s 確保: %s / %s / %dx%d" % (
+            index, _fourcc_name(cap) or "不明", backend_name,
+            int(cap.get(3)), int(cap.get(4))), "ok")
+    except Exception:  # noqa: BLE001 -ログ失敗で確保は止めない
+        pass
     with _streams_lock:
         existing = _streams.get(index)
         if existing is not None:
@@ -1234,3 +1242,160 @@ def unhold(index):
         cap = _retire(index, stream)
     if cap is not None:
         cap.release()
+
+
+# ================= 占有者特定と強制接収(2026-11-26 / デバッグ管理者用) =================
+# Windows のカメラハンドルはOS排他管理のため、他プロセスから「奪う」APIは存在しない。
+# できることは ①保持者(らしきもの)の特定 ②管理者の判断でそのプロセスを kill ③再確保。
+# ①の特定は Windows 10+ の Capability Access Store(カメラ利用記録レジストリ)を使う:
+#   NonPackaged のサブキー名 = exeパス、LastUsedTimeStop==0 は「今まさに使用中」。
+#   これは Settings アプリが表示しているのと同じ情報で、実プロセスのハンドル列挙より安全。
+# Linux(本番AWS)はUSBカメラ自体が無いので空一覧でよい(/proc scan は将来拡張)。
+
+_CAPABILITY_KEYS = [
+    (0x80000002, r"SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\webcam\NonPackaged"),
+    (0x80000001, r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\webcam\NonPackaged"),
+]
+
+
+def _filetime_to_epoch(value):
+    """FILETIME(int) → epoch秒。0/Noneはそのまま"""
+    try:
+        v = int(value)
+    except (TypeError, ValueError):
+        return None
+    if v <= 0:
+        return 0
+    return (v - 116444736000000000) / 10000000.0
+
+
+def camera_holders(index):
+    """このカメラを「今/直近」使っているらしきプロセス一覧を返す(読むだけ・無害)
+
+    戻り値: [{pid, name, path, using, last_used, kind}] (pid が無いエントリもある)
+    """
+    if platform.system() != "Windows":
+        return []
+    holders = []
+    try:
+        import winreg
+    except ImportError:
+        return []
+    now = time.time()
+    for hive, rel in _CAPABILITY_KEYS:
+        try:
+            with winreg.OpenKey(hive, rel) as base:
+                i = 0
+                while True:
+                    try:
+                        sub = winreg.EnumKey(base, i)
+                    except OSError:
+                        break
+                    i += 1
+                    try:
+                        with winreg.OpenKey(base, sub) as k:
+                            vals = {}
+                            for name in ("LastUsedTimeStart", "LastUsedTimeStop"):
+                                try:
+                                    vals[name] = winreg.QueryValueEx(k, name)[0]
+                                except OSError:
+                                    vals[name] = 0
+                    except OSError:
+                        continue
+                    start = _filetime_to_epoch(vals.get("LastUsedTimeStart")) or 0
+                    stop = _filetime_to_epoch(vals.get("LastUsedTimeStop")) or 0
+                    using = bool(start and not stop)
+                    recent = bool(start and (now - (stop or start)) < 300)
+                    if not (using or recent):
+                        continue
+                    path = sub.split("!")[0].replace("#", "\\")
+                    name = os.path.basename(path) or sub
+                    holders.append({
+                        "pid": _find_pid_by_exe(path),
+                        "name": name,
+                        "path": path,
+                        "using": using,
+                        "last_used": time.strftime("%H:%M:%S", time.localtime(start)) if start else "",
+                        "kind": "ai2" if "python" in name.lower() else "app",
+                    })
+        except OSError:
+            continue
+    # ai2自身の残骸(runserver二重起動)はハンドル記録に出ないことがあるので別検出
+    for h in _ai2_duplicate_servers():
+        if not any(x["pid"] == h["pid"] for x in holders):
+            holders.append(h)
+    holders.sort(key=lambda x: (not x["using"], x["name"]))
+    return holders
+
+
+def _find_pid_by_exe(path):
+    """exeパスから実行中PIDを探す(無ければNone)。psutilは任意導入"""
+    try:
+        import psutil
+    except ImportError:
+        return None
+    base = os.path.basename(path or "").lower()
+    for proc in psutil.process_iter(["pid", "name", "exe"]):
+        try:
+            exe = (proc.info.get("exe") or "").lower()
+            if exe and exe == (path or "").lower():
+                return proc.info["pid"]
+            if base and exe.endswith(base):
+                return proc.info["pid"]
+        except Exception:  # noqa: BLE001 -アクセス不可プロセスは読み飛ばす
+            continue
+    return None
+
+
+def _ai2_duplicate_servers():
+    """カメラを掴みうる ai2 残骸プロセス(runserver)を列挙(自分自身は除外)"""
+    out = []
+    try:
+        import psutil
+    except ImportError:
+        return out
+    for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+        try:
+            cmd = " ".join(proc.info.get("cmdline") or [])
+            if "manage.py" in cmd and "runserver" in cmd and proc.info["pid"] != os.getpid():
+                out.append({"pid": proc.info["pid"], "name": proc.info["name"],
+                            "path": cmd[:120], "using": True, "last_used": "起動中",
+                            "kind": "ai2"})
+        except Exception:  # noqa: BLE001
+            continue
+    return out
+
+
+def kill_holder(pid):
+    """指定PIDのプロセスを強制終了(管理者ボタン専用)。自分自身/OS必須は拒否"""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False, "PIDが不正です"
+    if pid <= 8 or pid == os.getpid():
+        return False, "システムプロセス/自分自身はkillできません"
+    try:
+        import psutil
+
+        proc = psutil.Process(pid)
+        try:
+            exe = (proc.exe() or "").lower()
+        except Exception:  # noqa: BLE001
+            exe = ""
+        if "system32" in exe or "syswow64" in exe:
+            return False, "Windowsシステムプロセスはkillできません (%s)" % proc.name()
+        name = proc.name()
+        proc.kill()
+        proc.wait(5)
+        return True, "%s (PID %d) を終了しました" % (name, pid)
+    except ImportError:
+        if platform.system() == "Windows":
+            try:
+                subprocess.run(["taskkill", "/F", "/PID", str(pid)],
+                               capture_output=True, timeout=10, check=True)
+                return True, "PID %d を終了しました(taskkill)" % pid
+            except Exception as exc:  # noqa: BLE001
+                return False, "終了失敗: %s" % exc
+        return False, "psutil が無くkillできません(pip install psutil)"
+    except Exception as exc:  # noqa: BLE001
+        return False, "終了失敗: %s: %s" % (type(exc).__name__, exc)

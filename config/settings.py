@@ -385,6 +385,9 @@ AI_CLIP_MIN_LYING = 0.5            # 「lying」の softmax確率がこれ未満
 AI_CLIP_CHECK_SECONDS = 10.0
 # 解析映像のJPEG品質(1〜100)
 AI_JPEG_QUALITY = 80
+# カメラデバッグの詳細ログ(2026-11-26): journal(console)側にもイベント単位で出す。
+# デバッグ画面の「起動準備ログ」側は常時(件数は内部で間引く)。Falseでprint系を止める
+AI_DEBUG_LOG_VERBOSE = True
 # 異常検知から録画する秒数(0 で録画しない)
 AI_RECORDING_SECONDS = 8
 # --- 録画の保存期間(プライバシー保護 / 2026-11-24) ---

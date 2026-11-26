@@ -502,6 +502,24 @@ def _velocity_fall_check(tilt_hist, roll_thr, window, horiz_thr, stay_deg, stay_
     return True, "roll=%.0f°/%dF→%.0f°" % (best_roll, window, arr[ev])
 
 
+# ================= デバッグ詳細ログ(2026-11-26) =================
+# journal(print)と デバッグ画面の「起動準備ログ」(readiness.note)へ同時に残す。
+# 同一 key は every 秒に1回まで(ハートビート系でログが爆発しないため)。
+# 状態遷移(people/status/vote/velocity/alert)は every=None で毎回出す。
+_dev_log_state = {}
+
+
+def _dev_log(device, key, msg, level="info", every=None, stage="ai"):
+    now_mono = time.monotonic()
+    if every is not None:
+        if now_mono - _dev_log_state.get((device, key), 0.0) < every:
+            return
+    _dev_log_state[(device, key)] = now_mono
+    readiness.note(stage, "[cam %s] %s" % (device, msg), level)
+    if bool(getattr(settings, "AI_DEBUG_LOG_VERBOSE", True)):
+        print("[RealtimeAI:%s] %s" % (device, msg))
+
+
 # ================= CLIP アラート検証官(旧 code\ai 転用 / 2026-11-24) =================
 # 旧aiはCLIPを主検知に使って「微妙」だった。使い方を**アラート瞬間だけの
 # ゼロショット検証**に変えると効く: 学習不要で「床に倒れている人」の意味を確認し、
@@ -902,6 +920,9 @@ class _CameraRuntime:
         lost_timeout = float(getattr(settings, "AI_FRAME_LOST_SECONDS", 20))
         snapshot_saved = False   # 一覧用のサムネイルをこのセッションで保存したか
 
+        # デバッグ詳細ログ用(2026-11-26): 人物数の遷移を追う
+        prev_people = 0
+
         while not stop.is_set():
             close_old_connections()
 
@@ -1121,6 +1142,9 @@ class _CameraRuntime:
                             track["velocity_up_count"] += 1
                             if track["velocity_up_count"] >= v_release_frames:
                                 # 起き上がった(立て直しが一定フレーム続く)
+                                _dev_log(device, "vel%d" % track["id"],
+                                         "速度ルール解除: Person %d(起き上がり/立て直し)"
+                                         % track["display_id"])
                                 track["velocity_fall"] = False
                                 track["velocity_why"] = ""
                                 track["velocity_up_count"] = 0
@@ -1134,8 +1158,9 @@ class _CameraRuntime:
                             track["velocity_fall"] = True
                             track["velocity_why"] = why
                             track["velocity_up_count"] = 0
-                            print(f"[RealtimeAI:{device}] 速度ルール発火: "
-                                  f"Person {track['display_id']} ({why})")
+                            _dev_log(device, "vel%d" % track["id"],
+                                     "速度ルール発火: Person %d (%s)" % (
+                                         track["display_id"], why), level="warn")
 
                 # 骨格描画用のEMA平滑化(AI入力には影響しない)
                 current = np.asarray(pose_data, dtype=np.float32).reshape(33, 3)
@@ -1184,10 +1209,27 @@ class _CameraRuntime:
                     if velocity_rule and track["velocity_fall"]:
                         probability = max(probability, v_confidence)
                     track["danger_percent"] = probability * 100.0
+                    prev_votes = track["fall_count"]
                     if probability >= threshold:
                         track["fall_count"] += 1
                         track["status"] = "FALL"
+                        if track["fall_count"] == 1:
+                            _dev_log(device, "vote%d" % track["id"],
+                                     "転倒投票開始: Person %d prob=%.2f(閾値%.2f) "
+                                     "source=%s" % (
+                                         track["display_id"], probability, threshold,
+                                         "速度ルール" if (velocity_rule and track["velocity_fall"])
+                                         else "LSTM"), level="warn")
+                        elif track["fall_count"] == confirm_count:
+                            _dev_log(device, "vote%d" % track["id"],
+                                     "転倒確定目前: Person %d 連続%d票 prob=%.2f"
+                                     % (track["display_id"], confirm_count, probability),
+                                     level="error")
                     else:
+                        if prev_votes >= 2:
+                            _dev_log(device, "vote%d" % track["id"],
+                                     "転倒票リセット: Person %d(%d票→prob=%.2f)"
+                                     % (track["display_id"], prev_votes, probability))
                         track["fall_count"] = 0
                         track["status"] = "NORMAL"
                     if track["fall_count"] >= confirm_count:
@@ -1197,9 +1239,20 @@ class _CameraRuntime:
                         state_labels[state_id] if state_id < len(state_labels) else "不明")
                     track["state_label"] = (
                         "転倒" if track["status"] == "FALL !!!" else predicted_state)
+                    if track.get("logged_status") != track["status"]:
+                        track["logged_status"] = track["status"]
+                        _dev_log(device, "st%d" % track["id"],
+                                 "Person %d 状態→%s danger=%s%% state=%s" % (
+                                     track["display_id"], track["status"],
+                                     round(track["danger_percent"] or 0.0), predicted_state))
 
             # ---------------- 画面全体の表示は「最悪の人物」 ----------------
             people = len(visible_tracks)
+            if people != prev_people:
+                _dev_log(device, "people",
+                         "人物 %d→%d(トラック保持 %d / 系列READY %d)"
+                         % (prev_people, people, len(tracks), len(ready_tracks)))
+                prev_people = people
             if visible_tracks:
                 fall_tracks = [t for t in visible_tracks if t["status"] == "FALL !!!"]
                 danger_tracks = [t for t in visible_tracks if t["status"] == "FALL"]
@@ -1266,9 +1319,11 @@ class _CameraRuntime:
                             verdict = False if track["clip_rejects"] else None
                         if verdict is False:
                             track["clip_rejects"] += 1
-                            print(f"[RealtimeAI:{device}] CLIPが転倒を拒否"
-                                  f"(しゃがみ/前かがみの可能性): Person {track['display_id']}"
-                                  f" 累計{track['clip_rejects']}回")
+                            _dev_log(device, "clip%d" % track["id"],
+                                     "CLIPが転倒を拒否(しゃがみ/前かがみの可能性): "
+                                     "Person %d 累計%d回" % (
+                                         track["display_id"], track["clip_rejects"]),
+                                     level="warn")
                             continue
                     # 信頼度は ai2 の規約どおり 0.0〜1.0 で保存する
                     alert_info = _raise_alert(
@@ -1277,6 +1332,10 @@ class _CameraRuntime:
                         person_id=track["display_id"],
                     ) or alert_info
                     track["fall_latched"] = True
+                    _dev_log(device, "alert",
+                             "FALLアラート発行: Person %d 信頼度=%.0f%% clip拒否=%d回"
+                             % (track["display_id"], track["danger_percent"] or 0.0,
+                                track["clip_rejects"]), level="error")
                 if track["fall_count"] == 0:
                     track["fall_latched"] = False
 
@@ -1298,6 +1357,10 @@ class _CameraRuntime:
             # 検知できたら録画開始(検知後 record_seconds 秒間)
             if alert_info is not None and record_seconds > 0:
                 rec_until = now + record_seconds
+                _dev_log(device, "rec",
+                         "自動録画開始: %d秒保存(種別=%s)" % (
+                             record_seconds, alert_info.get("raw_kind", "fall")),
+                         level="warn")
                 rec_frames = []
                 rec_meta = {
                     "alert_id": alert_info.get("id"),
@@ -1369,6 +1432,13 @@ class _CameraRuntime:
                     )
                     readiness.note("analyze", "%s の解析が始まりました(%s fps)" % (
                         _label(device), current_fps), "ok")
+                # 30秒間隔のハートビート(画面ログ+journal。fps低下の「いつから」を特定する)
+                if current_fps > 0:
+                    _dev_log(device, "hb",
+                             "fps=%.1f pose=%.1f people=%d status=%s 系列=%d/%d"
+                             % (current_fps, pose_fps or 0.0, people, status,
+                                sequence_frames, SEQUENCE_LENGTH),
+                             every=30.0)
 
             status_kwargs = {
                 "phase": "running",
