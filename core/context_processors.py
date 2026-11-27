@@ -15,12 +15,16 @@ def asset_version(request):
 
 
 def env_badge(request):
-    """ヘッダーの環境識別バッジ(開発=橙 / 本番=緑)。ログイン画面にも出す"""
+    """環境識別バッジ。**本番では何も出さない**(2026-11-27 方針)。
+
+    バッジは開発者向けの注意表示で、介護スタッフの画面に運用情報(開発/本番)を
+    見せる必要はない。dev のときだけ橙バッジ、prod は空。
+    """
     from django.conf import settings
 
-    if settings.ENV_NAME == "prod":
-        return {"env_badge": {"key": "prod", "label": "本番 AWS"}}
-    return {"env_badge": {"key": "dev", "label": "開発環境"}}
+    if settings.ENV_NAME == "dev":
+        return {"env_badge": {"key": "dev", "label": "開発環境"}}
+    return {"env_badge": None}
 
 
 def alert_globals(request):

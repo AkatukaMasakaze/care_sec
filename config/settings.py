@@ -36,7 +36,11 @@ ALLOWED_HOSTS = ["localhost", "127.0.0.1", "testserver"] + [
 # 開発機とAWS本番が同じ顔をしていて「どちらに操作したか」事故が起きやすい為、
 # ヘッダーに常時バッジを出す。既定は開発環境。本番の /etc/care-sec.env で
 # CARE_SEC_ENV=prod を設定すると緑の「本番 AWS」になる。
-ENV_NAME = os.environ.get("CARE_SEC_ENV", "dev").strip().lower()
+# 2026-11-27 実測の教訓: envファイルの追記漏れで本番が「開発環境」と表示された。
+# 未指定のときは DEBUG で推定する(開発の runserver は必ず DEBUG=1、本番は DEBUG=0)。
+ENV_NAME = os.environ.get("CARE_SEC_ENV", "").strip().lower()
+if not ENV_NAME:
+    ENV_NAME = "dev" if DEBUG else "prod"
 
 # --- 本番(DEBUG=0)のhttps前提の強化(AWS Setup Guide 9章 / DuckDNS+certbot) ---
 if not DEBUG:

@@ -412,20 +412,24 @@ class EnvBadgeTest(TestCase):
     def setUp(self):
         self.user = User.objects.create_user("badge_user", password="x")
 
-    def test_dev_badge_by_default(self):
+    def test_dev_badge_when_env_dev(self):
+        from django.test import override_settings
+
         self.client.force_login(self.user)
-        res = self.client.get("/")
+        with override_settings(ENV_NAME="dev"):
+            res = self.client.get("/")
         self.assertContains(res, "開発環境")
         self.assertContains(res, "env-badge--dev")
 
-    def test_prod_badge_when_env_prod(self):
+    def test_prod_badge_hidden(self):
+        """本番はバッジ自体を表示しない(運用情報をスタッフに見せない)"""
         from django.test import override_settings
 
         self.client.force_login(self.user)
         with override_settings(ENV_NAME="prod"):
             res = self.client.get("/")
-        self.assertContains(res, "本番 AWS")
-        self.assertContains(res, "env-badge--prod")
+        self.assertNotContains(res, "env-badge")
+        self.assertNotContains(res, "本番 AWS")
 
 
 class CameraSourceKnobTest(TestCase):

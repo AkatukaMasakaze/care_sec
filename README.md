@@ -39,8 +39,10 @@ sudo journalctl -u caresec -f          # 起動ログ([RealtimeAI] 解析稼働�
 sudo systemctl restart caresec         # デプロイ後(モデル再ロード込み約15-20秒)
 ```
 
-デプロイ=開発機で `git push` → サーバー `sudo -u caresec git pull` → `migrate`/`collectstatic` 必要なら実行 → restart。
-**サーバー上のコードを手で編集しない**(pull衝突+幽霊差分の原因)。
+デプロイ=開発機で `git push` → サーバー `sudo -u caresec -H git -C /srv/caresec pull --ff-only` →
+**`core/migrations/` に新ファイルが入っていたら必ず `migrate`** → js/css変更なら `collectstatic` → restart。
+(migrate漏れは `no such column` で全ページ500になる: 2026-11-27 実測)
+**サーバー上のコードを手で編集しない**(pull衝突+幽霊差分の原因)。git操作は常に caresec 名義で。
 
 ## 環境変数(settings.py が読む)
 
@@ -189,7 +191,8 @@ db.sqlite3       SQLite(gitignore。本番はEBSスナップショットで守�
 ## 本番運用メモ
 
 - **gunicorn workers=1 必須**(AI常駐スレッドはプロセス内1つ。`_claim_ai_lock` が他プロセスを排除)
-- 反映手順: push → pull → (migrate/collectstatic) → restart。`CARE_SEC_ENV=prod` でバッジが緑
+- 反映手順: push → pull → **(マイグレーション増分なら)migrate** → (js/css増分なら)collectstatic → restart。`CARE_SEC_ENV=prod` でバッジが緑
+- 本番のカメラ源は **`net`**(管理画面 AI設定→カメラ源。未設定だとUSB検知が空振りログを大量に出す: 2026-11-27実測)
 - 監視: `journalctl -u caresec` に `[RealtimeAI] …解析稼働中(fps=…)` が証言。certbot timer生存確認は `systemctl list-timers`
 - **未実施(次)**: EBSスナップショット(DLM日次)+`sqlite3 .backup` cron+復旧リハーサル(AWS Setup Guide 10章)
 - `/health` エンドポイント未設置(ガイド11.1に2行の追記案)
